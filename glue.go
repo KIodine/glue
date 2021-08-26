@@ -11,6 +11,10 @@ var (
 	ErrTypeIncompat = errors.New("types are not compatible")
 )
 
+/* TODO:
+- [ ] allow ignore fields
+*/
+
 /* Glue tries to merge two structs by copying fields from dst to src that have
 the same name and the same type. */
 func Glue(dst, src interface{}) error {
