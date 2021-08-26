@@ -5,6 +5,8 @@ import (
 	"reflect"
 )
 
+const glueTagKey = "glue"
+
 var (
 	ErrTypeIncompat = errors.New("types are not compatible")
 )
@@ -13,12 +15,16 @@ var (
 the same name and the same type. */
 func Glue(dst, src interface{}) error {
 	var (
-		vdst = reflect.ValueOf(dst)
-		vsrc = reflect.ValueOf(src)
-		dstStruct,
-		srcStruct reflect.Value
-		srcType,
-		dstType reflect.Type
+		exist bool
+		vdst  = reflect.ValueOf(dst)
+		vsrc  = reflect.ValueOf(src)
+		/* reflect stuffs */
+		dstStruct, srcStruct       reflect.Value
+		dstType, srcType           reflect.Type
+		nameSrcField, nameDstField string
+		dstFieldMeta, srcFieldMeta reflect.StructField
+		dstField, srcField         reflect.Value
+		nameByTag                  string
 	)
 	if !isValidPtrToStruct(&vdst) || !isValidPtrToStruct(&vsrc) {
 		return ErrTypeIncompat
@@ -27,20 +33,25 @@ func Glue(dst, src interface{}) error {
 	dstType = dstStruct.Type() //reflect.TypeOf(dstStruct)
 	srcStruct = vsrc.Elem()    //reflect.Indirect(vsrc)
 	srcType = srcStruct.Type() //reflect.TypeOf(srcStruct)
-	//dstFields = dstStruct.NumField()
+
 	dstNumFields := dstType.NumField()
-	//dstType.Name()
 
 	/* for each field have the same name and same type, copy value. */
 	for i := 0; i < dstNumFields; i++ {
-		dstFieldMeta := dstType.Field(i)
-		name := dstFieldMeta.Name
+		dstFieldMeta = dstType.Field(i)
+		nameSrcField = dstFieldMeta.Name
+		nameDstField = nameSrcField
 		/* only set public fields. This should be the same on the src. */
 		if !dstFieldMeta.IsExported() {
 			continue
 		}
-		/* X: or allow compare tag `glue:"<name>"`? */
-		srcFieldMeta, exist := srcType.FieldByName(name)
+		/* allow gluing src fields specified by tag, this takes priority. */
+		/* X: allow strict src format "<struct>.<field>" ? */
+		nameByTag, exist = dstFieldMeta.Tag.Lookup(glueTagKey)
+		if exist {
+			nameSrcField = nameByTag
+		}
+		srcFieldMeta, exist = srcType.FieldByName(nameSrcField)
 		/* no corresponding field on src. */
 		if !exist {
 			continue
@@ -49,8 +60,8 @@ func Glue(dst, src interface{}) error {
 		/*
 			There are several unclear question/problems:
 			1) There are type aliases. Type does strict compare, or this is
-				exactly what we desire?
-			2) Can type compare directly? even they are just interfaces?
+				exactly what we desire? -> Yes.
+			2) Can type compare directly? even they are just interfaces? -> Yes.
 		*/
 		if dstFieldMeta.Type != srcFieldMeta.Type {
 			continue
@@ -60,13 +71,15 @@ func Glue(dst, src interface{}) error {
 			1) the dst field must exist
 			2) we can get the field on src by the name from dst field
 		*/
-		dstField := dstStruct.FieldByName(name)
-		srcField := srcStruct.FieldByName(name)
-		/* require both side can set. */
+		dstField = dstStruct.FieldByName(nameDstField)
+		srcField = srcStruct.FieldByName(nameSrcField)
+		/* require both side can set.(probably just need to test one side) */
+		/* Q: `CanSet` means `can mutate`? is there such thing a immutable field
+		in struct? */
 		if !dstField.CanSet() || !srcField.CanSet() {
 			continue
 		}
-		/* does this copy struct field recursivly/deep copy? */
+		/* does this copy struct field recursivly/deep copy? -> just shallow copy */
 		/* X: maybe a `copyRecursive` */
 		dstField.Set(reflect.ValueOf(srcField.Interface()))
 
@@ -81,7 +94,7 @@ func isValidPtrToStruct(rv *reflect.Value) bool {
 	if rv.IsNil() {
 		return false
 	}
-	ind := reflect.Indirect(*rv)
+	ind := rv.Elem() //reflect.Indirect(*rv)
 	/* don't care it's zero. */
 	//lint:ignore S1008 I know what I'm doing.
 	if ind.Kind() != reflect.Struct {
