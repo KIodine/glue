@@ -116,4 +116,55 @@ func BenchmarkGlueBasic(b *testing.B) {
 	}
 }
 
-/* TODO: benchmark gluing using tag. */
+func BenchmarkGlueWithTag(b *testing.B) {
+	type tFoo struct {
+		A int64           `glue:"M"`
+		B string          `glue:"N"`
+		C []byte          `glue:"O"`
+		D map[string]bool `glue:"P"`
+		E chan int        `glue:"Q"`
+	}
+	type tBar struct {
+		M int64
+		N string
+		O []byte
+		P map[string]bool
+		Q chan int
+		r uint32
+	}
+	var ff = new(tFoo)
+	bz := make([]*tBar, 128)
+	for i := 0; i < len(bz); i++ {
+		bz[i] = &tBar{
+			M: rand.Int63(),
+			N: "bBarstring" + strconv.QuoteRune('A'+rand.Int31n(26)),
+			O: []byte{'a', 'b', 'c', 'd'},
+			P: make(map[string]bool),
+			Q: make(chan int, 24),
+			r: rand.Uint32(),
+		}
+	}
+	b.ResetTimer()
+
+	for i := 0; i < b.N; i++ {
+		bf := bz[rand.Intn(len(bz))]
+		glue.Glue(ff, bf)
+		/*
+			assert.Equal(b, ff.A, bf.M)
+			assert.Equal(b, ff.B, bf.N)
+			assert.Equal(b, ff.C, bf.O)
+			assert.Equal(b, ff.D, bf.P)
+			assert.Equal(b, ff.E, bf.Q)
+		*/
+	}
+}
+
+/* TODO: test failing conditions:
+- Not valid parameter type.
+	- Not pointer.
+	- `nil` pointer.
+	- Different type.
+- Unexported destination.
+- Unsatisfied destination.
+- Same name, different type.
+- ?Fields cannot set.(How?)*/
