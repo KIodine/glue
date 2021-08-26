@@ -74,6 +74,8 @@ func Glue(dst, src interface{}) error {
 		dstField = dstStruct.FieldByName(nameDstField)
 		srcField = srcStruct.FieldByName(nameSrcField)
 		/* require both side can set.(probably just need to test one side) */
+		/* Q: `CanSet` means `can mutate`? is there such thing a immutable field
+		in struct? */
 		if !dstField.CanSet() || !srcField.CanSet() {
 			continue
 		}
