@@ -11,6 +11,13 @@ var (
 	ErrTypeIncompat = errors.New("types are not compatible")
 )
 
+/* TODO:
+- [ ] allow ignore fields.
+- [ ] allow push/pull fields.
+- [ ] allow get from method?
+- [ ] cache tag analyze result? `map[reflect.Type]*GluCache`
+*/
+
 /* Glue tries to merge two structs by copying fields from dst to src that have
 the same name and the same type. */
 func Glue(dst, src interface{}) error {
@@ -42,7 +49,8 @@ func Glue(dst, src interface{}) error {
 		nameSrcField = dstFieldMeta.Name
 		nameDstField = nameSrcField
 		/* only set public fields. This should be the same on the src. */
-		if !dstFieldMeta.IsExported() {
+		/* backport of method `IsExported(1.17~)` */
+		if !(dstFieldMeta.PkgPath == "") {
 			continue
 		}
 		/* allow gluing src fields specified by tag, this takes priority. */
