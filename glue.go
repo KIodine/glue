@@ -12,7 +12,10 @@ var (
 )
 
 /* TODO:
-- [ ] allow ignore fields
+- [ ] allow ignore fields.
+- [ ] allow push/pull fields.
+- [ ] allow get from method?
+- [ ] cache tag analyze result? `map[reflect.Type]*GluCache`
 */
 
 /* Glue tries to merge two structs by copying fields from dst to src that have
