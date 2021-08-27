@@ -49,7 +49,8 @@ func Glue(dst, src interface{}) error {
 		nameSrcField = dstFieldMeta.Name
 		nameDstField = nameSrcField
 		/* only set public fields. This should be the same on the src. */
-		if !dstFieldMeta.IsExported() {
+		/* backport of method `IsExported(1.17~)` */
+		if !(dstFieldMeta.PkgPath == "") {
 			continue
 		}
 		/* allow gluing src fields specified by tag, this takes priority. */
