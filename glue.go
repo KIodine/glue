@@ -15,16 +15,45 @@ var (
 )
 
 /* TODO:
-- [ ] allow ignore fields.
+- [ ] cache tag analyze result?
+	Protected by rwlock?
+	- `var cacheLock sync.RWMutex`
+	- `var typeCache map[reflect.Type]*fieldCache`
+	- `type fieldIdent string`
+	- `type fieldCache map[fieldIdent]fieldAttr`
+	```
+	type fieldAttr struct {
+		PushName string // empty string indicates ignore.
+		PullName string
+	}
+	```
 - [ ] allow push/pull fields: `glue:"pull=Alpha,push=Beta"`
-- [ ] allow get from method?
-- [ ] cache tag analyze result? `map[reflect.Type]*GluCache`
+	- Allow override unexported field?
+- [ ] allow ignore fields, ex:
+	- ignore both: `glue:"pull=-,push=-"` or `glue:"-"`
+		```
+		type attrKey string
+		const (
+			attrPull attrKey = "pull"
+			attrPush attrKey = "push"
+			attrIgnr attrKey = "-"
+			//attrDeep attrKey = "deep"
+		)
+		```
+	- ignore one side:
+		`glue:"pull=-,push=Arc`(pull from none, export as `Arc`)
+		`glue:"push=-,pull=Arc`(export as none, pull from `Arc`)
+	- panic if: exported duplicated name, duplicated tag hint.
+- [ ] do deepcopy: `glue:"deep"`
+- [ ] allow get from method? Only methods require no parameter.
 */
 
-/* Glue tries to merge two structs by copying fields from dst to src that have
-the same name and the same type. The major target of `Glue` is to satisfy the
-need of dst structure with best effort and does not require the two structure
-being "the same size"(have equally number of fields.). */
+/* Glue copies fields from src to dst that have the same name and the same type.
+The major target of `Glue` is to satisfy the need of dst structure with best
+effort and does not require the two structures being the same "size"(have
+equally numbers of fields).
+`Glue` assumes that dst struct serves as a temporary storage of data and does
+not perform deepcopy on each field that is being copied from. */
 func Glue(dst, src interface{}) error {
 	var (
 		exist bool
