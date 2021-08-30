@@ -245,3 +245,48 @@ func TestUnmatchedFields(t *testing.T) {
 	assert.Equal(t, ans_b, ub.A)
 
 }
+
+func TestInvalidIdentifier(t *testing.T) {
+	type (
+		iFoo struct {
+			A string `glue:"123"` /* should not start with number */
+		}
+		iBar struct {
+			A string
+		}
+		iBaz struct {
+			A string `glue:""` /* empty identifier */
+		}
+		iPar struct {
+			A string `glue:"a+b"` /* not allowed `+` sign */
+		}
+		iPad struct {
+			A string `glue:"A111"` /* good, should pass the validation */
+		}
+		iPac struct {
+			A string `glue:"A\x80"` /* invalid utf8 sequence */
+		}
+	)
+	br := &iBar{A: "Copy"}
+	fo := &iFoo{A: "cope"}
+	bz := &iBaz{A: "coke"}
+	pr := &iPar{A: "cook"}
+	pd := &iPad{A: "cumb"}
+	pc := &iPac{A: "cron"}
+
+	assert.Panics(t, func() {
+		_ = glue.Glue(fo, br)
+	})
+	assert.Panics(t, func() {
+		_ = glue.Glue(bz, br)
+	})
+	assert.Panics(t, func() {
+		_ = glue.Glue(pr, br)
+	})
+	assert.NotPanics(t, func() {
+		_ = glue.Glue(pd, br)
+	})
+	assert.Panics(t, func() {
+		_ = glue.Glue(pc, br)
+	})
+}
