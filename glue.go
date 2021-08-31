@@ -4,14 +4,32 @@ import (
 	"errors"
 	"fmt"
 	"reflect"
+	"sync"
 	"unicode"
 	"unicode/utf8"
 )
 
-const glueTagKey = "glue"
+const (
+	/* struct tag */
+	glueTagKey = "glue"
+	/* tag attr */
+	attrIgnr = "-"
+)
 
 var (
 	ErrTypeIncompat = errors.New("types are not compatible")
+)
+
+type (
+	fieldAttr struct {
+		PullName string
+	}
+	fieldCache map[string]*fieldAttr
+)
+
+var (
+	cacheLock sync.Mutex
+	typeCache = make(map[reflect.Type]fieldCache, 32)
 )
 
 /* PROPASAL:
@@ -66,7 +84,7 @@ func Glue(dst, src interface{}) error {
 		srcFieldName, dstFieldName string
 		dstFieldMeta, srcFieldMeta reflect.StructField
 		dstField, srcField         reflect.Value
-		srcTagName                 string
+		//srcTagName                 string
 	)
 	if !isValidPtrToStruct(&vdst) || !isValidPtrToStruct(&vsrc) {
 		return ErrTypeIncompat
@@ -80,29 +98,70 @@ func Glue(dst, src interface{}) error {
 	/* X: if do cache tag parse results, do it here and analyze all fields at
 	once, protected by mutex lock. `parseTag(v *reflect.Value) fieldCache`
 	glue tags have no effect on the src side. */
+	cacheLock.Lock()
+	var (
+		dstAttrs fieldCache
+		rawAttrs string
+		fAttr    *fieldAttr
+	)
+	dstAttrs, exist = typeCache[dstType]
+	if !exist {
+		dstAttrs = make(fieldCache, 8)
+		for i := 0; i < dstNumFields; i++ {
+			fAttr = &fieldAttr{}
+			dstFieldMeta = dstType.Field(i)
+			dstAttrs[dstFieldMeta.Name] = fAttr
+
+			/* backport of method `IsExported(1.17-)` */
+			if !(dstFieldMeta.PkgPath == "") {
+				/* leave pull name blank */
+				continue
+			}
+
+			rawAttrs, exist = dstFieldMeta.Tag.Lookup(glueTagKey)
+			if !exist {
+				/* has no glue tag */
+				fAttr.PullName = dstFieldMeta.Name
+				continue
+			}
+			if rawAttrs == attrIgnr {
+				/* leave pull name blank */
+				continue
+			}
+			if !isValidIdentifier(rawAttrs) {
+				cacheLock.Unlock()
+				panic(fmt.Errorf("%q is not a valid identifier", rawAttrs))
+			}
+			fAttr.PullName = rawAttrs
+			//rawAttrs = strings.Split()
+		}
+		typeCache[dstType] = dstAttrs
+	}
+	cacheLock.Unlock()
 
 	/* for each field have the same name and same type, copy value. */
 	for i := 0; i < dstNumFields; i++ {
 		dstFieldMeta = dstType.Field(i)
-		srcFieldName = dstFieldMeta.Name
-		dstFieldName = srcFieldName
+		dstFieldName = dstFieldMeta.Name
+		//srcFieldName = dstFieldMeta.Name
+		srcFieldName = dstAttrs[dstFieldName].PullName
 		/* only set public fields. This should be the same on the src. */
-		/* backport of method `IsExported(1.17-)` */
-		if !(dstFieldMeta.PkgPath == "") {
+
+		if srcFieldName == "" {
 			continue
 		}
 		/* allow gluing src fields specified by tag, this takes priority. */
 		/* X: allow strict src format "<struct>.<field>" ? */
-		srcTagName, exist = dstFieldMeta.Tag.Lookup(glueTagKey)
-		if exist {
-			/* X: validate only once? how? */
-			if !isValidIdentifier(srcTagName) {
-				/* if the tag is not a valid identifier, it would never had a
-				chance to be satisfied or to satisfy an untagged field. */
-				panic(fmt.Errorf("%q is not a valid identifier", srcTagName))
-			}
-			srcFieldName = srcTagName
-		}
+		//srcTagName, exist = dstFieldMeta.Tag.Lookup(glueTagKey)
+		//if exist {
+		//	/* X: validate only once? how? */
+		//	if !isValidIdentifier(srcTagName) {
+		//		/* if the tag is not a valid identifier, it would never had a
+		//		chance to be satisfied or to satisfy an untagged field. */
+		//		panic(fmt.Errorf("%q is not a valid identifier", srcTagName))
+		//	}
+		//	srcFieldName = srcTagName
+		//}
 		srcFieldMeta, exist = srcType.FieldByName(srcFieldName)
 		/* no corresponding field on src. */
 		if !exist {
