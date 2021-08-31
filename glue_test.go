@@ -4,6 +4,7 @@ import (
 	"glue"
 	"math/rand"
 	"strconv"
+	"sync"
 	"testing"
 
 	"github.com/stretchr/testify/assert"
@@ -139,6 +140,98 @@ func BenchmarkGlueBasic(b *testing.B) {
 	}
 }
 
+func TestGlueWithTagRandom(t *testing.T) {
+	type tFoo struct {
+		A int64           `glue:"M"`
+		B string          `glue:"N"`
+		C []byte          `glue:"O"`
+		D map[string]bool `glue:"P"`
+		E chan int        `glue:"Q"`
+	}
+	type tBar struct {
+		M int64
+		N string
+		O []byte
+		P map[string]bool
+		Q chan int
+		r uint32
+	}
+	var ff = new(tFoo)
+	bz := make([]*tBar, 128)
+	for i := 0; i < len(bz); i++ {
+		bz[i] = &tBar{
+			M: rand.Int63(),
+			N: "bBarstring" + strconv.QuoteRune('A'+rand.Int31n(26)),
+			O: []byte{'a', 'b', 'c', 'd'},
+			P: make(map[string]bool),
+			Q: make(chan int, 24),
+			r: rand.Uint32(),
+		}
+	}
+
+	for i := 0; i < len(bz); i++ {
+		bf := bz[rand.Intn(len(bz))]
+		glue.Glue(ff, bf)
+		assert.Equal(t, bf.M, ff.A)
+		assert.Equal(t, bf.N, ff.B)
+		assert.Equal(t, bf.O, ff.C)
+		assert.Equal(t, bf.P, ff.D)
+		assert.Equal(t, bf.Q, ff.E)
+	}
+}
+
+func TestGlueWithTagRandomParallel(t *testing.T) {
+	type tFoo struct {
+		A int64           `glue:"M"`
+		B string          `glue:"N"`
+		C []byte          `glue:"O"`
+		D map[string]bool `glue:"P"`
+		E chan int        `glue:"Q"`
+	}
+	type tBar struct {
+		M int64
+		N string
+		O []byte
+		P map[string]bool
+		Q chan int
+		r uint32
+	}
+	const nJob = 4
+	var bar sync.WaitGroup
+	//var ff *tFoo // = new(tFoo)
+
+	bz := make([]*tBar, 128)
+	for i := 0; i < len(bz); i++ {
+		bz[i] = &tBar{
+			M: rand.Int63(),
+			N: "bBarstring" + strconv.QuoteRune('A'+rand.Int31n(26)),
+			O: []byte{'a', 'b', 'c', 'd'},
+			P: make(map[string]bool),
+			Q: make(chan int, 24),
+			r: rand.Uint32(),
+		}
+	}
+
+	bar.Add(nJob)
+	for j := 0; j < nJob; j++ {
+		go func() {
+			defer bar.Done()
+			ff := new(tFoo)
+			for i := 0; i < len(bz); i++ {
+				bf := bz[rand.Intn(len(bz))]
+				glue.Glue(ff, bf)
+				/* FIXME: Failing on multi-thread scenario? */
+				assert.Equal(t, bf.M, ff.A) // failing
+				assert.Equal(t, bf.N, ff.B) // failing
+				assert.Equal(t, bf.O, ff.C) // why no failing?
+				assert.Equal(t, bf.P, ff.D) // why no failing?
+				assert.Equal(t, bf.Q, ff.E) // failing
+			}
+		}()
+	}
+	bar.Wait()
+}
+
 func BenchmarkGlueWithTag(b *testing.B) {
 	type tFoo struct {
 		A int64           `glue:"M"`
@@ -175,14 +268,54 @@ func BenchmarkGlueWithTag(b *testing.B) {
 	}
 }
 
+func BenchmarkGlueWithTagParallel(b *testing.B) {
+	type tFoo struct {
+		A int64           `glue:"M"`
+		B string          `glue:"N"`
+		C []byte          `glue:"O"`
+		D map[string]bool `glue:"P"`
+		E chan int        `glue:"Q"`
+	}
+	type tBar struct {
+		M int64
+		N string
+		O []byte
+		P map[string]bool
+		Q chan int
+		r uint32
+	}
+	const nJob = 4
+	var bar sync.WaitGroup
+	//var ff *tFoo // = new(tFoo)
+
+	bz := make([]*tBar, 128)
+	for i := 0; i < len(bz); i++ {
+		bz[i] = &tBar{
+			M: rand.Int63(),
+			N: "bBarstring" + strconv.QuoteRune('A'+rand.Int31n(26)),
+			O: []byte{'a', 'b', 'c', 'd'},
+			P: make(map[string]bool),
+			Q: make(chan int, 24),
+			r: rand.Uint32(),
+		}
+	}
+	b.ResetTimer()
+
+	bar.Add(nJob)
+	for j := 0; j < nJob; j++ {
+		go func() {
+			defer bar.Done()
+			ff := new(tFoo)
+			for i := 0; i < (b.N / nJob); i++ {
+				bf := bz[rand.Intn(len(bz))]
+				glue.Glue(ff, bf)
+			}
+		}()
+	}
+	bar.Wait()
+}
+
 /* TODO: test failing conditions:
-- [X] Not valid parameter type.
-	- [X] Not pointer.
-	- [X] `nil` pointer.
-	- [X] Different type.
-- [X] Unexported destination.
-- [X] Unmatched destination.
-	- [X] Same name, different type.
 - [ ] ?Fields cannot set.(How?)
 */
 
