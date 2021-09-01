@@ -423,3 +423,21 @@ func TestInvalidIdentifier(t *testing.T) {
 		_ = glue.Glue(pc, br)
 	})
 }
+
+/* TODO: test ignore attr */
+func TestIgnoreField(t *testing.T) {
+	type gFoo struct {
+		A int `glue:"-"`
+		B int
+	}
+	type gBar struct {
+		A int
+		B int
+	}
+	f := &gFoo{A: -1, B: 0}
+	b := &gBar{A: 1024, B: 512}
+	glue.Glue(f, b)
+	assert.Equal(t, -1, f.A)
+	assert.Equal(t, b.B, f.B)
+
+}
