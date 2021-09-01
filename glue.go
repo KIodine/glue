@@ -15,17 +15,7 @@ var (
 )
 
 /* PROPASAL:
-- [ ] cache tag analyze result?
-	Protected by rwlock?
-	- `var cacheLock sync.Mutex`
-	- `var typeCache map[reflect.Type]*fieldCache`
-	- `type fieldCache map[string]fieldAttr`
-	```
-	type fieldAttr struct {
-		PushName string // empty string indicates ignore.
-		//PullName string
-	}
-	```
+- [X] cache tag analyze result?
 - [ ] allow push/pull fields: `glue:"pull=Alpha,push=Beta"`
 	+ Reject the idea of `push` attr.
 	- Allow override unexported field? -> No
@@ -40,9 +30,6 @@ var (
 			//attrDeep attrKey = "deep"
 		)
 		```
-	- ignore one side:
-		`glue:"pull=-,push=Arc`(pull from none, export as `Arc`)
-		`glue:"push=-,pull=Arc`(export as none, pull from `Arc`)
 	- panic if: exported duplicated name, duplicated tag hint.
 - [ ] do deepcopy: `glue:"deep"`
 - [ ] allow get from method? Only methods require no parameter and must have
@@ -95,6 +82,9 @@ func Glue(dst, src interface{}) error {
 		/* X: allow strict src format "<struct>.<field>" ? */
 		srcTagName, exist = dstFieldMeta.Tag.Lookup(glueTagKey)
 		if exist {
+			if srcTagName == "-" {
+				continue
+			}
 			/* X: validate only once? how? */
 			if !isValidIdentifier(srcTagName) {
 				/* if the tag is not a valid identifier, it would never had a
