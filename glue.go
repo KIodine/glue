@@ -15,11 +15,18 @@ var (
 )
 
 /* PROPASAL:
-- [X] cache tag analyze result?
-- [ ] allow push/pull fields: `glue:"pull=Alpha,push=Beta"`
+- [ ] allow type conversion map
+	``` prototype
+	func RegConvertionMap(tDst, tSrc, cb interface) error {}
+	```
+- [ ] allow get from method? Only methods require no parameter and must have
+	matching type.
+	- [ ] allow push/pull fields: `glue:"pull=Alpha,push=Beta"`
 	+ Reject the idea of `push` attr.
 	- Allow override unexported field? -> No
-- [ ] allow ignore fields, ex:
+- [ ] do deepcopy: `glue:"deep"`
+- [X] cache tag analyze result?
+- [X] allow ignore fields, ex:
 	- ignore both: `glue:"pull=-,push=-"` or `glue:"-"`
 		```
 		type attrKey string
@@ -31,9 +38,6 @@ var (
 		)
 		```
 	- panic if: exported duplicated name, duplicated tag hint.
-- [ ] do deepcopy: `glue:"deep"`
-- [ ] allow get from method? Only methods require no parameter and must have
-	matching type.
 */
 
 /* Glue copies fields from src to dst that have the same name and the same type.
