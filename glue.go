@@ -25,43 +25,22 @@ type (
 		PullName string
 	}
 	fieldCache map[string]*fieldAttr
+	/* X: better name? */
+	typeMapKey struct {
+		dst reflect.Type
+		src reflect.Type
+	}
 )
 
 var (
 	cacheLock sync.Mutex
 	typeCache = make(map[reflect.Type]fieldCache, 32)
+	convLock  sync.RWMutex
+	typeMap   = make(map[typeMapKey]reflect.Value, 32)
 )
 
 /* PROPASAL:
-- [ ] cache tag analyze result?
-	Protected by rwlock?
-	- `var cacheLock sync.Mutex`
-	- `var typeCache map[reflect.Type]*fieldCache`
-	- `type fieldCache map[string]fieldAttr`
-	```
-	type fieldAttr struct {
-		PushName string // empty string indicates ignore.
-		//PullName string
-	}
-	```
-- [ ] allow push/pull fields: `glue:"pull=Alpha,push=Beta"`
-	+ Reject the idea of `push` attr.
-	- Allow override unexported field? -> No
-- [ ] allow ignore fields, ex:
-	- ignore both: `glue:"pull=-,push=-"` or `glue:"-"`
-		```
-		type attrKey string
-		const (
-			attrPull attrKey = "pull"
-			attrPush attrKey = "push"
-			attrIgnr attrKey = "-"
-			//attrDeep attrKey = "deep"
-		)
-		```
-	- ignore one side:
-		`glue:"pull=-,push=Arc`(pull from none, export as `Arc`)
-		`glue:"push=-,pull=Arc`(export as none, pull from `Arc`)
-	- panic if: exported duplicated name, duplicated tag hint.
+- [ ] allow auto convertion if type mapping is registered.
 - [ ] do deepcopy: `glue:"deep"`
 - [ ] allow get from method? Only methods require no parameter and must have
 	matching type.
@@ -106,6 +85,7 @@ func Glue(dst, src interface{}) error {
 	)
 	dstAttrs, exist = typeCache[dstType]
 	if !exist {
+		// TODO: separate as helper routine.
 		dstAttrs = make(fieldCache, 8)
 		for i := 0; i < dstNumFields; i++ {
 			fAttr = &fieldAttr{}
@@ -133,6 +113,7 @@ func Glue(dst, src interface{}) error {
 				panic(fmt.Errorf("%q is not a valid identifier", rawAttrs))
 			}
 			fAttr.PullName = rawAttrs
+			/* do below this line parse if allow multiple attributes. */
 			//rawAttrs = strings.Split()
 		}
 		typeCache[dstType] = dstAttrs
@@ -143,7 +124,6 @@ func Glue(dst, src interface{}) error {
 	for i := 0; i < dstNumFields; i++ {
 		dstFieldMeta = dstType.Field(i)
 		dstFieldName = dstFieldMeta.Name
-		//srcFieldName = dstFieldMeta.Name
 		srcFieldName = dstAttrs[dstFieldName].PullName
 		/* only set public fields. This should be the same on the src. */
 
@@ -152,24 +132,25 @@ func Glue(dst, src interface{}) error {
 		}
 		/* allow gluing src fields specified by tag, this takes priority. */
 		/* X: allow strict src format "<struct>.<field>" ? */
-		//srcTagName, exist = dstFieldMeta.Tag.Lookup(glueTagKey)
-		//if exist {
-		//	/* X: validate only once? how? */
-		//	if !isValidIdentifier(srcTagName) {
-		//		/* if the tag is not a valid identifier, it would never had a
-		//		chance to be satisfied or to satisfy an untagged field. */
-		//		panic(fmt.Errorf("%q is not a valid identifier", srcTagName))
-		//	}
-		//	srcFieldName = srcTagName
-		//}
 		srcFieldMeta, exist = srcType.FieldByName(srcFieldName)
 		/* no corresponding field on src. */
 		if !exist {
 			continue
 		}
 		/* test if types are strictly equal */
+		var fconv reflect.Value
 		if dstFieldMeta.Type != srcFieldMeta.Type {
-			continue
+			// TODO: try convert src to dst.
+			mk := typeMapKey{
+				dst: dstFieldMeta.Type,
+				src: srcFieldMeta.Type,
+			}
+			convLock.RLock()
+			fconv, exist = typeMap[mk]
+			convLock.RUnlock()
+			if !exist {
+				continue
+			}
 		}
 		/*
 			at this point we've guarenteed the field must exist:
@@ -186,7 +167,16 @@ func Glue(dst, src interface{}) error {
 		}
 		/* does this copy struct field recursivly/deep copy? -> just shallow copy */
 		/* X: maybe a `copyRecursive` */
-		dstField.Set(reflect.ValueOf(srcField.Interface()))
+		var v reflect.Value
+		if reflect.ValueOf(fconv).IsZero() {
+			v = reflect.ValueOf(srcField.Interface())
+		} else {
+			ret := fconv.Call(
+				[]reflect.Value{reflect.ValueOf(srcField.Interface())},
+			)
+			v = reflect.ValueOf(ret[0].Interface())
+		}
+		dstField.Set(v)
 
 	}
 	return nil
@@ -242,4 +232,83 @@ iter_rune:
 		s = s[sz:]
 	}
 	return true
+}
+
+// NOTE: can have struct of types as key.
+// TODO: give it a better name
+func RegConversion(tDst, tSrc, converter interface{}) bool {
+	typeDst := reflect.ValueOf(tDst).Type()
+	typeSrc := reflect.ValueOf(tSrc).Type()
+	vConvFunc := reflect.ValueOf(converter)
+	if vConvFunc.Kind() != reflect.Func {
+		return false
+	}
+	vfunc := reflect.FuncOf(
+		[]reflect.Type{typeSrc},
+		[]reflect.Type{typeDst},
+		false,
+	)
+	if vConvFunc.Type() != vfunc {
+		return false
+	}
+
+	convLock.Lock()
+	mk := typeMapKey{
+		dst: typeDst,
+		src: typeSrc,
+	}
+	typeMap[mk] = vConvFunc
+	convLock.Unlock()
+	return true
+}
+
+func getAttrCache(t reflect.Type) fieldCache {
+	dstNumFields := t.NumField()
+	/* X: if do cache tag parse results, do it here and analyze all fields at
+	once, protected by mutex lock. `parseTag(v *reflect.Value) fieldCache`
+	glue tags have no effect on the src side. */
+	cacheLock.Lock()
+	defer cacheLock.Unlock()
+	var (
+		dstAttrs fieldCache
+		rawAttrs string
+		fAttr    *fieldAttr
+		exist    bool
+	)
+	dstAttrs, exist = typeCache[t]
+	if !exist {
+		// TODO: separate as helper routine.
+		dstAttrs = make(fieldCache, 8)
+		for i := 0; i < dstNumFields; i++ {
+			fAttr = &fieldAttr{}
+			dstFieldMeta := t.Field(i)
+			dstAttrs[dstFieldMeta.Name] = fAttr
+
+			/* backport of method `IsExported(1.17-)` */
+			if !(dstFieldMeta.PkgPath == "") {
+				/* leave pull name blank */
+				continue
+			}
+
+			rawAttrs, exist = dstFieldMeta.Tag.Lookup(glueTagKey)
+			if !exist {
+				/* has no glue tag */
+				fAttr.PullName = dstFieldMeta.Name
+				continue
+			}
+			if rawAttrs == attrIgnr {
+				/* leave pull name blank */
+				continue
+			}
+			if !isValidIdentifier(rawAttrs) {
+				panic(fmt.Errorf("%q is not a valid identifier", rawAttrs))
+			}
+			fAttr.PullName = rawAttrs
+			/* do below this line parse if allow multiple attributes. */
+			//rawAttrs = strings.Split()
+		}
+		typeCache[t] = dstAttrs
+	}
+
+	return dstAttrs
 }
