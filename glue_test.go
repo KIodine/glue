@@ -10,6 +10,10 @@ import (
 	"github.com/stretchr/testify/assert"
 )
 
+/* TODO: test failing conditions:
+- [ ] ?Fields cannot set.(How?)
+*/
+
 func TestGlueBasic(t *testing.T) {
 	type xFoo struct {
 		Beta  int
@@ -314,10 +318,6 @@ func BenchmarkGlueWithTagParallel(b *testing.B) {
 	bar.Wait()
 }
 
-/* TODO: test failing conditions:
-- [ ] ?Fields cannot set.(How?)
-*/
-
 func TestInvalidParams(t *testing.T) {
 	var (
 		err error
@@ -328,13 +328,13 @@ func TestInvalidParams(t *testing.T) {
 	)
 
 	err = glue.Glue(nil, nil)
-	assert.Equal(t, glue.ErrTypeIncompat, err)
+	assert.Equal(t, glue.ErrNotPtrToStruct, err)
 	err = glue.Glue(c, d)
-	assert.Equal(t, glue.ErrTypeIncompat, err)
+	assert.Equal(t, glue.ErrNotPtrToStruct, err)
 	err = glue.Glue(1, 2)
-	assert.Equal(t, glue.ErrTypeIncompat, err)
+	assert.Equal(t, glue.ErrNotPtrToStruct, err)
 	err = glue.Glue(&a, &b)
-	assert.Equal(t, glue.ErrTypeIncompat, err)
+	assert.Equal(t, glue.ErrNotPtrToStruct, err)
 }
 
 func TestUnexportedFields(t *testing.T) {

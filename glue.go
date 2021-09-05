@@ -17,7 +17,7 @@ const (
 )
 
 var (
-	ErrTypeIncompat = errors.New("types are not compatible")
+	ErrNotPtrToStruct = errors.New("one of the arguments is not pointer to struct")
 )
 
 // Q: should unexported struct using lowercase name or not?
@@ -25,13 +25,11 @@ var (
 type (
 	fieldAttr struct {
 		PullFrom string
+		Field    reflect.StructField
 	}
-	fieldCache map[string]*fieldAttr
-	typeAttr   struct {
+	typeAttr struct {
 		exportedNum int
-		attrMap     fieldCache
-		// X: pairing with `PullFrom`? then we don't need to have the map.
-		fieldArr []reflect.StructField
+		fieldArr    []*fieldAttr
 	}
 	/* X: better name? */
 	typeMapKey struct {
@@ -50,7 +48,6 @@ var (
 )
 
 /* PROPASAL:
-- [X] allow auto convertion if type mapping is registered.
 - [ ] do deepcopy: `glue:"deep"`
 - [ ] allow get from method? Only methods require no parameter and must have
 	matching type.
@@ -69,15 +66,16 @@ func Glue(dst, src interface{}) error {
 		vdst  = reflect.ValueOf(dst)
 		vsrc  = reflect.ValueOf(src)
 		/* reflect stuffs */
-		dstStruct, srcStruct       reflect.Value
-		dstType, srcType           reflect.Type
-		srcFieldName, dstFieldName string
+		dstStruct, srcStruct reflect.Value
+		dstType, srcType     reflect.Type
+		srcFieldName         string
+		//dstFieldName string
 		dstFieldMeta, srcFieldMeta reflect.StructField
 		dstField, srcField         reflect.Value
 		dstAttrs                   *typeAttr
 	)
 	if !isValidPtrToStruct(&vdst) || !isValidPtrToStruct(&vsrc) {
-		return ErrTypeIncompat
+		return ErrNotPtrToStruct
 	}
 	dstStruct = vdst.Elem()
 	srcStruct = vsrc.Elem()
@@ -92,9 +90,9 @@ func Glue(dst, src interface{}) error {
 	// for each field have the same name and same type, copy value.
 	// filtered fields will not present.
 	for i := 0; i < dstNumFields; i++ {
-		dstFieldMeta = dstAttrs.fieldArr[i]
-		dstFieldName = dstFieldMeta.Name
-		srcFieldName = dstAttrs.attrMap[dstFieldName].PullFrom
+		dfa := dstAttrs.fieldArr[i]
+		dstFieldMeta = dfa.Field
+		srcFieldName = dfa.PullFrom //dstAttrs.attrMap[dstFieldName].PullFrom
 
 		// part 1: test if
 		// 1) src field exists
@@ -237,12 +235,13 @@ func RegConversion(tDst, tSrc, converter interface{}) bool {
 	}
 
 	convLock.Lock()
+	defer convLock.Unlock()
 	mk := typeMapKey{
 		dst: typeDst,
 		src: typeSrc,
 	}
 	typeMap[mk] = vConvFunc
-	convLock.Unlock()
+
 	return true
 }
 
@@ -264,7 +263,6 @@ func getTypeAttr(t reflect.Type) *typeAttr {
 		return dstAttrs
 	}
 	dstAttrs = new(typeAttr)
-	dstAttrs.attrMap = make(fieldCache, 8)
 	for i := 0; i < dstNumFields; i++ {
 		fieldMeta := t.Field(i)
 		// `attrMap` and `fieldArr` only records "available" fields:
@@ -282,10 +280,10 @@ func getTypeAttr(t reflect.Type) *typeAttr {
 			/* early out, has no glue tag, pullname is field name. */
 			fAttr = &fieldAttr{
 				PullFrom: fieldMeta.Name,
+				Field:    fieldMeta,
 			}
-			dstAttrs.attrMap[fieldMeta.Name] = fAttr
 			dstAttrs.exportedNum++
-			dstAttrs.fieldArr = append(dstAttrs.fieldArr, fieldMeta)
+			dstAttrs.fieldArr = append(dstAttrs.fieldArr, fAttr)
 			continue
 		}
 		if rawAttrs == attrIgnr {
@@ -295,17 +293,18 @@ func getTypeAttr(t reflect.Type) *typeAttr {
 		if !isValidIdentifier(rawAttrs) {
 			panic(fmt.Errorf("%q is not a valid identifier", rawAttrs))
 		}
-		fAttr = &fieldAttr{}
+		fAttr = &fieldAttr{
+			Field: fieldMeta,
+		}
 		// only record exported/not-ignored struct fields.
 
-		/* do below this line parse if allow multiple attributes. */
+		// do parse below this line if allow multiple attributes.
 		// rawAttrs = strings.Split()
 		fAttr.PullFrom = rawAttrs
 		// and do anylyze, if required so.
 
-		dstAttrs.attrMap[fieldMeta.Name] = fAttr
 		dstAttrs.exportedNum++
-		dstAttrs.fieldArr = append(dstAttrs.fieldArr, fieldMeta)
+		dstAttrs.fieldArr = append(dstAttrs.fieldArr, fAttr)
 	}
 	typeCache[t] = dstAttrs
 
