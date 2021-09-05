@@ -64,6 +64,7 @@ func Glue(dst, src interface{}) error {
 		dstFieldMeta, srcFieldMeta reflect.StructField
 		dstField, srcField         reflect.Value
 		//srcTagName                 string
+		dstAttrs fieldCache
 	)
 	if !isValidPtrToStruct(&vdst) || !isValidPtrToStruct(&vsrc) {
 		return ErrTypeIncompat
@@ -74,73 +75,38 @@ func Glue(dst, src interface{}) error {
 	srcType = srcStruct.Type()
 
 	dstNumFields := dstType.NumField()
-	/* X: if do cache tag parse results, do it here and analyze all fields at
-	once, protected by mutex lock. `parseTag(v *reflect.Value) fieldCache`
-	glue tags have no effect on the src side. */
-	cacheLock.Lock()
-	var (
-		dstAttrs fieldCache
-		rawAttrs string
-		fAttr    *fieldAttr
-	)
-	dstAttrs, exist = typeCache[dstType]
-	if !exist {
-		// TODO: separate as helper routine.
-		dstAttrs = make(fieldCache, 8)
-		for i := 0; i < dstNumFields; i++ {
-			fAttr = &fieldAttr{}
-			dstFieldMeta = dstType.Field(i)
-			dstAttrs[dstFieldMeta.Name] = fAttr
 
-			/* backport of method `IsExported(1.17-)` */
-			if !(dstFieldMeta.PkgPath == "") {
-				/* leave pull name blank */
-				continue
-			}
-
-			rawAttrs, exist = dstFieldMeta.Tag.Lookup(glueTagKey)
-			if !exist {
-				/* has no glue tag */
-				fAttr.PullName = dstFieldMeta.Name
-				continue
-			}
-			if rawAttrs == attrIgnr {
-				/* leave pull name blank */
-				continue
-			}
-			if !isValidIdentifier(rawAttrs) {
-				cacheLock.Unlock()
-				panic(fmt.Errorf("%q is not a valid identifier", rawAttrs))
-			}
-			fAttr.PullName = rawAttrs
-			/* do below this line parse if allow multiple attributes. */
-			//rawAttrs = strings.Split()
-		}
-		typeCache[dstType] = dstAttrs
-	}
-	cacheLock.Unlock()
+	dstAttrs = getAttrCache(dstType)
 
 	/* for each field have the same name and same type, copy value. */
 	for i := 0; i < dstNumFields; i++ {
-		dstFieldMeta = dstType.Field(i)
+		dstFieldMeta = dstType.Field(i) // X: costly, but can cache(in `getAttrCache`)?
 		dstFieldName = dstFieldMeta.Name
 		srcFieldName = dstAttrs[dstFieldName].PullName
-		/* only set public fields. This should be the same on the src. */
 
+		// part 1: test if
+		// 1) src field exists
+		// 2) two sides have same type or have registered conversion function.
+
+		/* only set public fields. This should be the same on the src.
+		the name is blank if dst is unexported or tagged as ignore. */
 		if srcFieldName == "" {
 			continue
 		}
 		/* allow gluing src fields specified by tag, this takes priority. */
 		/* X: allow strict src format "<struct>.<field>" ? */
+		/* X: costly, but can cache? */
 		srcFieldMeta, exist = srcType.FieldByName(srcFieldName)
 		/* no corresponding field on src. */
 		if !exist {
 			continue
 		}
 		/* test if types are strictly equal */
-		var fconv reflect.Value
+		var (
+			fconv  reflect.Value
+			doConv bool
+		)
 		if dstFieldMeta.Type != srcFieldMeta.Type {
-			// TODO: try convert src to dst.
 			mk := typeMapKey{
 				dst: dstFieldMeta.Type,
 				src: srcFieldMeta.Type,
@@ -148,15 +114,20 @@ func Glue(dst, src interface{}) error {
 			convLock.RLock()
 			fconv, exist = typeMap[mk]
 			convLock.RUnlock()
+			doConv = exist
 			if !exist {
 				continue
 			}
 		}
+
+		// part 2: test two fields can set and do conversion if required so.
+
 		/*
 			at this point we've guarenteed the field must exist:
 			1) the dst field must exist
 			2) we can get the field on src by the name from dst field
 		*/
+		/* `FieldByName` is costly, can cache with index? */
 		dstField = dstStruct.FieldByName(dstFieldName)
 		srcField = srcStruct.FieldByName(srcFieldName)
 		/* require both side can set.(probably just need to test one side) */
@@ -168,7 +139,7 @@ func Glue(dst, src interface{}) error {
 		/* does this copy struct field recursivly/deep copy? -> just shallow copy */
 		/* X: maybe a `copyRecursive` */
 		var v reflect.Value
-		if reflect.ValueOf(fconv).IsZero() {
+		if !doConv { //reflect.ValueOf(fconv).IsZero() {
 			v = reflect.ValueOf(srcField.Interface())
 		} else {
 			ret := fconv.Call(
@@ -263,18 +234,16 @@ func RegConversion(tDst, tSrc, converter interface{}) bool {
 }
 
 func getAttrCache(t reflect.Type) fieldCache {
-	dstNumFields := t.NumField()
-	/* X: if do cache tag parse results, do it here and analyze all fields at
-	once, protected by mutex lock. `parseTag(v *reflect.Value) fieldCache`
-	glue tags have no effect on the src side. */
-	cacheLock.Lock()
-	defer cacheLock.Unlock()
 	var (
 		dstAttrs fieldCache
 		rawAttrs string
 		fAttr    *fieldAttr
 		exist    bool
 	)
+	dstNumFields := t.NumField()
+
+	cacheLock.Lock()
+	defer cacheLock.Unlock()
 	dstAttrs, exist = typeCache[t]
 	if !exist {
 		// TODO: separate as helper routine.
