@@ -4,36 +4,57 @@ import (
 	"errors"
 	"fmt"
 	"reflect"
+	"sync"
 	"unicode"
 	"unicode/utf8"
 )
 
-const glueTagKey = "glue"
+const (
+	/* struct tag */
+	glueTagKey = "glue"
+	/* tag attr */
+	attrIgnr = "-"
+)
 
 var (
 	ErrTypeIncompat = errors.New("types are not compatible")
 )
 
+// Q: should unexported struct using lowercase name or not?
+
+type (
+	fieldAttr struct {
+		PullFrom string
+	}
+	fieldCache map[string]*fieldAttr
+	typeAttr   struct {
+		exportedNum int
+		attrMap     fieldCache
+		// X: pairing with `PullFrom`? then we don't need to have the map.
+		fieldArr []reflect.StructField
+	}
+	/* X: better name? */
+	typeMapKey struct {
+		dst reflect.Type
+		src reflect.Type
+	}
+)
+
+var (
+	cacheLock sync.Mutex
+	typeCache = make(map[reflect.Type]*typeAttr, 32)
+	// NOTE: if we're making `Glue` as method in the future, this will be a
+	// private attribute.
+	convLock sync.RWMutex
+	typeMap  = make(map[typeMapKey]reflect.Value, 32)
+)
+
 /* PROPASAL:
-- [X] cache tag analyze result?
-- [ ] allow push/pull fields: `glue:"pull=Alpha,push=Beta"`
-	+ Reject the idea of `push` attr.
-	- Allow override unexported field? -> No
-- [ ] allow ignore fields, ex:
-	- ignore both: `glue:"pull=-,push=-"` or `glue:"-"`
-		```
-		type attrKey string
-		const (
-			attrPull attrKey = "pull"
-			attrPush attrKey = "push"
-			attrIgnr attrKey = "-"
-			//attrDeep attrKey = "deep"
-		)
-		```
-	- panic if: exported duplicated name, duplicated tag hint.
+- [X] allow auto convertion if type mapping is registered.
 - [ ] do deepcopy: `glue:"deep"`
 - [ ] allow get from method? Only methods require no parameter and must have
 	matching type.
+- [ ] allow strict src name: `<struct>.<field>`?
 */
 
 /* Glue copies fields from src to dst that have the same name and the same type.
@@ -53,7 +74,7 @@ func Glue(dst, src interface{}) error {
 		srcFieldName, dstFieldName string
 		dstFieldMeta, srcFieldMeta reflect.StructField
 		dstField, srcField         reflect.Value
-		srcTagName                 string
+		dstAttrs                   *typeAttr
 	)
 	if !isValidPtrToStruct(&vdst) || !isValidPtrToStruct(&vsrc) {
 		return ErrTypeIncompat
@@ -63,52 +84,65 @@ func Glue(dst, src interface{}) error {
 	dstType = dstStruct.Type()
 	srcType = srcStruct.Type()
 
-	dstNumFields := dstType.NumField()
-	/* X: if do cache tag parse results, do it here and analyze all fields at
-	once, protected by mutex lock. `parseTag(v *reflect.Value) fieldCache`
-	glue tags have no effect on the src side. */
+	// get filtered(unexported or tagged as ignore) fields.
+	dstAttrs = getTypeAttr(dstType)
+	// X: also cache srcType?
+	dstNumFields := dstAttrs.exportedNum
 
-	/* for each field have the same name and same type, copy value. */
+	// for each field have the same name and same type, copy value.
+	// filtered fields will not present.
 	for i := 0; i < dstNumFields; i++ {
-		dstFieldMeta = dstType.Field(i)
-		srcFieldName = dstFieldMeta.Name
-		dstFieldName = srcFieldName
-		/* only set public fields. This should be the same on the src. */
-		/* backport of method `IsExported(1.17-)` */
-		if !(dstFieldMeta.PkgPath == "") {
-			continue
-		}
-		/* allow gluing src fields specified by tag, this takes priority. */
-		/* X: allow strict src format "<struct>.<field>" ? */
-		srcTagName, exist = dstFieldMeta.Tag.Lookup(glueTagKey)
-		if exist {
-			if srcTagName == "-" {
-				continue
-			}
-			/* X: validate only once? how? */
-			if !isValidIdentifier(srcTagName) {
-				/* if the tag is not a valid identifier, it would never had a
-				chance to be satisfied or to satisfy an untagged field. */
-				panic(fmt.Errorf("%q is not a valid identifier", srcTagName))
-			}
-			srcFieldName = srcTagName
-		}
+		dstFieldMeta = dstAttrs.fieldArr[i]
+		dstFieldName = dstFieldMeta.Name
+		srcFieldName = dstAttrs.attrMap[dstFieldName].PullFrom
+
+		// part 1: test if
+		// 1) src field exists
+		// 2) two sides have same type or have registered conversion function.
+
+		// X: costly, but can cache? yes, but aware that this function dives
+		// into embedded members and does scan with breadth-first search.
+		// Cache using {reflect.Type, string} composite key
+
+		// X: This is slow but can be parallelized, yet the side effect of
+		// contention on simple monolithic lock of cache cancels the benefit
+		// obtained from parallelization.
+		// The problem is we don't know it should be build or is cached until we
+		// access the cache and cannot know which type we're going to handle.
 		srcFieldMeta, exist = srcType.FieldByName(srcFieldName)
 		/* no corresponding field on src. */
 		if !exist {
 			continue
 		}
 		/* test if types are strictly equal */
+		var (
+			fconv  reflect.Value
+			doConv bool
+		)
 		if dstFieldMeta.Type != srcFieldMeta.Type {
-			continue
+			mk := typeMapKey{
+				dst: dstFieldMeta.Type,
+				src: srcFieldMeta.Type,
+			}
+			convLock.RLock()
+			fconv, exist = typeMap[mk]
+			convLock.RUnlock()
+			doConv = exist
+			if !exist {
+				continue
+			}
 		}
+		// part 2: test two fields can set and do conversion if required so.
+
 		/*
 			at this point we've guarenteed the field must exist:
 			1) the dst field must exist
 			2) we can get the field on src by the name from dst field
 		*/
-		dstField = dstStruct.FieldByName(dstFieldName)
-		srcField = srcStruct.FieldByName(srcFieldName)
+		// `Index` is way faster then access by name.
+		dstField = dstStruct.FieldByIndex(dstFieldMeta.Index)
+		srcField = srcStruct.FieldByIndex(srcFieldMeta.Index)
+
 		/* require both side can set.(probably just need to test one side) */
 		/* Q: `CanSet` means `can mutate`? is there such thing a immutable field
 		in struct? */
@@ -116,8 +150,17 @@ func Glue(dst, src interface{}) error {
 			continue
 		}
 		/* does this copy struct field recursivly/deep copy? -> just shallow copy */
-		/* X: maybe a `copyRecursive` */
-		dstField.Set(reflect.ValueOf(srcField.Interface()))
+		/* X: maybe a `copyRecursive`? */
+		var v reflect.Value
+		if !doConv {
+			v = reflect.ValueOf(srcField.Interface())
+		} else {
+			ret := fconv.Call(
+				[]reflect.Value{reflect.ValueOf(srcField.Interface())},
+			)
+			v = reflect.ValueOf(ret[0].Interface())
+		}
+		dstField.Set(v)
 
 	}
 	return nil
@@ -173,4 +216,98 @@ iter_rune:
 		s = s[sz:]
 	}
 	return true
+}
+
+// NOTE: can have struct of types as key.
+// TODO: give it a better name
+func RegConversion(tDst, tSrc, converter interface{}) bool {
+	typeDst := reflect.ValueOf(tDst).Type()
+	typeSrc := reflect.ValueOf(tSrc).Type()
+	vConvFunc := reflect.ValueOf(converter)
+	if vConvFunc.Kind() != reflect.Func {
+		return false
+	}
+	vfunc := reflect.FuncOf(
+		[]reflect.Type{typeSrc},
+		[]reflect.Type{typeDst},
+		false,
+	)
+	if vConvFunc.Type() != vfunc {
+		return false
+	}
+
+	convLock.Lock()
+	mk := typeMapKey{
+		dst: typeDst,
+		src: typeSrc,
+	}
+	typeMap[mk] = vConvFunc
+	convLock.Unlock()
+	return true
+}
+
+// getTypeAttr returns cache of `*typeAttr`, it builds attribute if no cache
+// can be acquired.
+func getTypeAttr(t reflect.Type) *typeAttr {
+	var (
+		dstAttrs *typeAttr
+		rawAttrs string
+		fAttr    *fieldAttr
+		exist    bool
+	)
+	dstNumFields := t.NumField()
+
+	cacheLock.Lock()
+	defer cacheLock.Unlock()
+	dstAttrs, exist = typeCache[t]
+	if exist {
+		return dstAttrs
+	}
+	dstAttrs = new(typeAttr)
+	dstAttrs.attrMap = make(fieldCache, 8)
+	for i := 0; i < dstNumFields; i++ {
+		fieldMeta := t.Field(i)
+		// `attrMap` and `fieldArr` only records "available" fields:
+		// 1) natively exported.
+		// 2) not tagged as ignored.
+
+		/* backport of method `IsExported(1.17-)` */
+		if !(fieldMeta.PkgPath == "") {
+			// no record.
+			continue
+		}
+
+		rawAttrs, exist = fieldMeta.Tag.Lookup(glueTagKey)
+		if !exist {
+			/* early out, has no glue tag, pullname is field name. */
+			fAttr = &fieldAttr{
+				PullFrom: fieldMeta.Name,
+			}
+			dstAttrs.attrMap[fieldMeta.Name] = fAttr
+			dstAttrs.exportedNum++
+			dstAttrs.fieldArr = append(dstAttrs.fieldArr, fieldMeta)
+			continue
+		}
+		if rawAttrs == attrIgnr {
+			/* leave pull name blank */
+			continue
+		}
+		if !isValidIdentifier(rawAttrs) {
+			panic(fmt.Errorf("%q is not a valid identifier", rawAttrs))
+		}
+		fAttr = &fieldAttr{}
+		// only record exported/not-ignored struct fields.
+
+		/* do below this line parse if allow multiple attributes. */
+		// rawAttrs = strings.Split()
+		fAttr.PullFrom = rawAttrs
+		// and do anylyze, if required so.
+
+		dstAttrs.attrMap[fieldMeta.Name] = fAttr
+		dstAttrs.exportedNum++
+		dstAttrs.fieldArr = append(dstAttrs.fieldArr, fieldMeta)
+	}
+	typeCache[t] = dstAttrs
+
+	return dstAttrs
 }
