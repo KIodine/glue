@@ -21,6 +21,7 @@ var (
 )
 
 // Q: should unexported struct using lowercase name or not?
+
 type (
 	fieldAttr struct {
 		PullFrom string
@@ -49,7 +50,7 @@ var (
 )
 
 /* PROPASAL:
-- [ ] allow auto convertion if type mapping is registered.
+- [X] allow auto convertion if type mapping is registered.
 - [ ] do deepcopy: `glue:"deep"`
 - [ ] allow get from method? Only methods require no parameter and must have
 	matching type.
@@ -99,10 +100,9 @@ func Glue(dst, src interface{}) error {
 		// 1) src field exists
 		// 2) two sides have same type or have registered conversion function.
 
-		/* X: costly, but can cache? yes, but aware that this function dives
-		into embedded members and does scan with breadth-first search. */
-		// X: cache using {reflect.Type, string} composite key?
-		// X: a globally cache: `fieldMetaCache[...]reflect.StructField`?
+		// X: costly, but can cache? yes, but aware that this function dives
+		// into embedded members and does scan with breadth-first search.
+		// Cache using {reflect.Type, string} composite key
 
 		// X: This is slow but can be parallelized, yet the side effect of
 		// contention on simple monolithic lock of cache cancels the benefit
