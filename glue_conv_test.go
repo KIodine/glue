@@ -60,6 +60,22 @@ func TestConvBasic(t *testing.T) {
 
 }
 
+/* TODO:
+- test non-function conversion func input.
+- test incompatible conversion function.
+*/
+
+func TestRegNonFunction(t *testing.T) {
+	ok := glue.RegConversion(int(0), int(0), float64(0))
+	assert.False(t, ok)
+}
+
+func TestRegIncompatSignature(t *testing.T) {
+	Int2F32 := func(n int) float32 { return float32(n) }
+	ok := glue.RegConversion(float32(0), int64(0), Int2F32)
+	assert.False(t, ok)
+}
+
 func BenchmarkConv(b *testing.B) {
 	Int2F64 := func(n int) float64 {
 		return float64(n)
@@ -101,12 +117,6 @@ func BenchmarkConv(b *testing.B) {
 
 	for i := 0; i < b.N; i++ {
 		_ = glue.Glue(cf, cb)
-		/*
-			assert.NoError(b, err)
-			assert.Equal(b, float64(0.0), cf.A)
-			assert.Equal(b, float32(0.0), cf.B)
-			assert.Equal(b, uint16(1024), cf.C)
-		*/
 		// reset, randomize.
 		cf.A = rand.Float64()
 		cf.B = rand.Float32()
