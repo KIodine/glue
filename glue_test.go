@@ -92,7 +92,6 @@ func TestGlue(t *testing.T) {
 	assert.Equal(t, bb.E, bf.E)
 }
 
-/* TODO: test embedded fields. */
 func TestGlueEmbedded(t *testing.T) {
 	type (
 		EFoo struct {
@@ -102,8 +101,8 @@ func TestGlueEmbedded(t *testing.T) {
 			EFoo
 		}
 		eBaz struct {
-			EFoo
 			B int
+			EFoo
 		}
 	)
 	var (
@@ -424,7 +423,6 @@ func TestInvalidIdentifier(t *testing.T) {
 	})
 }
 
-/* TODO: test ignore attr */
 func TestIgnoreField(t *testing.T) {
 	type gFoo struct {
 		A int `glue:"-"`
@@ -440,4 +438,27 @@ func TestIgnoreField(t *testing.T) {
 	assert.Equal(t, -1, f.A)
 	assert.Equal(t, b.B, f.B)
 
+}
+
+// this different since it pulls field A in embedded struct `emb`.
+func TestPullEmbedded(t *testing.T) {
+	type (
+		emb struct {
+			A int
+		}
+		Foo struct {
+			A int
+		}
+		Bar struct {
+			emb
+			B int
+		}
+	)
+	f := &Foo{A: -1}
+	b := &Bar{emb: emb{A: 1023}, B: 99}
+
+	err := glue.Glue(f, b)
+
+	assert.NoError(t, err)
+	assert.Equal(t, b.emb.A, f.A)
 }
