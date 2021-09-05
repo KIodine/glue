@@ -25,6 +25,12 @@ type (
 		PullName string
 	}
 	fieldCache map[string]*fieldAttr
+	typeAttr   struct {
+		exportedNum int
+		attrMap     fieldCache
+		fieldArr    []reflect.StructField
+		// X: how to cache `FieldByName`?
+	}
 	/* X: better name? */
 	typeMapKey struct {
 		dst reflect.Type
@@ -32,9 +38,10 @@ type (
 	}
 )
 
+// X: better name?
 var (
 	cacheLock sync.Mutex
-	typeCache = make(map[reflect.Type]fieldCache, 32)
+	typeCache = make(map[reflect.Type]*typeAttr, 32)
 	convLock  sync.RWMutex
 	typeMap   = make(map[typeMapKey]reflect.Value, 32)
 )
@@ -44,6 +51,7 @@ var (
 - [ ] do deepcopy: `glue:"deep"`
 - [ ] allow get from method? Only methods require no parameter and must have
 	matching type.
+- [ ] allow strict src name: `<struct>.<field>`?
 */
 
 /* Glue copies fields from src to dst that have the same name and the same type.
@@ -63,8 +71,7 @@ func Glue(dst, src interface{}) error {
 		srcFieldName, dstFieldName string
 		dstFieldMeta, srcFieldMeta reflect.StructField
 		dstField, srcField         reflect.Value
-		//srcTagName                 string
-		dstAttrs fieldCache
+		dstAttrs                   *typeAttr
 	)
 	if !isValidPtrToStruct(&vdst) || !isValidPtrToStruct(&vsrc) {
 		return ErrTypeIncompat
@@ -74,15 +81,18 @@ func Glue(dst, src interface{}) error {
 	dstType = dstStruct.Type()
 	srcType = srcStruct.Type()
 
-	dstNumFields := dstType.NumField()
-
-	dstAttrs = getAttrCache(dstType)
+	dstAttrs = getTypeAttr(dstType)
+	// X: also cache srcType?
+	dstNumFields := dstAttrs.exportedNum //dstType.NumField()
 
 	/* for each field have the same name and same type, copy value. */
 	for i := 0; i < dstNumFields; i++ {
-		dstFieldMeta = dstType.Field(i) // X: costly, but can cache(in `getAttrCache`)?
+		/* golang reflect performs linear scan, repeated call results in
+		O(n^2) time complexity. */
+		// X: costly, but can cache(in `getAttrCache`)?
+		dstFieldMeta = dstAttrs.fieldArr[i] //dstType.Field(i)
 		dstFieldName = dstFieldMeta.Name
-		srcFieldName = dstAttrs[dstFieldName].PullName
+		srcFieldName = dstAttrs.attrMap[dstFieldName].PullName
 
 		// part 1: test if
 		// 1) src field exists
@@ -94,8 +104,9 @@ func Glue(dst, src interface{}) error {
 			continue
 		}
 		/* allow gluing src fields specified by tag, this takes priority. */
-		/* X: allow strict src format "<struct>.<field>" ? */
-		/* X: costly, but can cache? */
+		/* X: costly, but can cache? yes, but aware that this function dives
+		into embedded members and does scan with breadth-first search. */
+		// X: cache using {reflect.Type, string} composite key?
 		srcFieldMeta, exist = srcType.FieldByName(srcFieldName)
 		/* no corresponding field on src. */
 		if !exist {
@@ -127,7 +138,7 @@ func Glue(dst, src interface{}) error {
 			1) the dst field must exist
 			2) we can get the field on src by the name from dst field
 		*/
-		/* `FieldByName` is costly, can cache with index? */
+		/* `FieldByName` is costly, can do cache? */
 		dstField = dstStruct.FieldByName(dstFieldName)
 		srcField = srcStruct.FieldByName(srcFieldName)
 		/* require both side can set.(probably just need to test one side) */
@@ -139,7 +150,7 @@ func Glue(dst, src interface{}) error {
 		/* does this copy struct field recursivly/deep copy? -> just shallow copy */
 		/* X: maybe a `copyRecursive` */
 		var v reflect.Value
-		if !doConv { //reflect.ValueOf(fconv).IsZero() {
+		if !doConv {
 			v = reflect.ValueOf(srcField.Interface())
 		} else {
 			ret := fconv.Call(
@@ -233,9 +244,11 @@ func RegConversion(tDst, tSrc, converter interface{}) bool {
 	return true
 }
 
-func getAttrCache(t reflect.Type) fieldCache {
+// getTypeAttr returns cache of `*typeAttr`, it does scan if no cache can
+// be acquired.
+func getTypeAttr(t reflect.Type) *typeAttr {
 	var (
-		dstAttrs fieldCache
+		dstAttrs *typeAttr
 		rawAttrs string
 		fAttr    *fieldAttr
 		exist    bool
@@ -245,39 +258,54 @@ func getAttrCache(t reflect.Type) fieldCache {
 	cacheLock.Lock()
 	defer cacheLock.Unlock()
 	dstAttrs, exist = typeCache[t]
-	if !exist {
-		// TODO: separate as helper routine.
-		dstAttrs = make(fieldCache, 8)
-		for i := 0; i < dstNumFields; i++ {
-			fAttr = &fieldAttr{}
-			dstFieldMeta := t.Field(i)
-			dstAttrs[dstFieldMeta.Name] = fAttr
-
-			/* backport of method `IsExported(1.17-)` */
-			if !(dstFieldMeta.PkgPath == "") {
-				/* leave pull name blank */
-				continue
-			}
-
-			rawAttrs, exist = dstFieldMeta.Tag.Lookup(glueTagKey)
-			if !exist {
-				/* has no glue tag */
-				fAttr.PullName = dstFieldMeta.Name
-				continue
-			}
-			if rawAttrs == attrIgnr {
-				/* leave pull name blank */
-				continue
-			}
-			if !isValidIdentifier(rawAttrs) {
-				panic(fmt.Errorf("%q is not a valid identifier", rawAttrs))
-			}
-			fAttr.PullName = rawAttrs
-			/* do below this line parse if allow multiple attributes. */
-			//rawAttrs = strings.Split()
-		}
-		typeCache[t] = dstAttrs
+	if exist {
+		return dstAttrs
 	}
+	dstAttrs = new(typeAttr) //make(fieldCache, 8)
+	dstAttrs.attrMap = make(fieldCache, 8)
+	for i := 0; i < dstNumFields; i++ {
+		dstFieldMeta := t.Field(i)
+		// `attrMap` and `fieldArr` only records "available" fields:
+		// 1) natively exported.
+		// 2) not tagged as ignored.
+
+		/* backport of method `IsExported(1.17-)` */
+		if !(dstFieldMeta.PkgPath == "") {
+			/* leave pull name blank */
+			continue
+		}
+
+		rawAttrs, exist = dstFieldMeta.Tag.Lookup(glueTagKey)
+		if !exist {
+			/* early out, has no glue tag, pullname is field name. */
+			fAttr = &fieldAttr{
+				PullName: dstFieldMeta.Name,
+			}
+			dstAttrs.attrMap[dstFieldMeta.Name] = fAttr
+			dstAttrs.exportedNum++
+			dstAttrs.fieldArr = append(dstAttrs.fieldArr, dstFieldMeta)
+			continue
+		}
+		if rawAttrs == attrIgnr {
+			/* leave pull name blank */
+			continue
+		}
+		if !isValidIdentifier(rawAttrs) {
+			panic(fmt.Errorf("%q is not a valid identifier", rawAttrs))
+		}
+		fAttr = &fieldAttr{}
+		// only record exported/not-ignored struct fields.
+
+		/* do below this line parse if allow multiple attributes. */
+		// rawAttrs = strings.Split()
+		fAttr.PullName = rawAttrs
+		// and do anylyze, if required so.
+
+		dstAttrs.attrMap[dstFieldMeta.Name] = fAttr
+		dstAttrs.exportedNum++
+		dstAttrs.fieldArr = append(dstAttrs.fieldArr, dstFieldMeta)
+	}
+	typeCache[t] = dstAttrs
 
 	return dstAttrs
 }
