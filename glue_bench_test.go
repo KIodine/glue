@@ -81,6 +81,8 @@ func BenchmarkBigStruct(b *testing.B) {
 			Yankee: rand.Int(), Zulu: rand.Int(),
 		}
 	}
+	b.ResetTimer()
+
 	br := &Bar{}
 	for i := 0; i < b.N; i++ {
 		f := fs[rand.Intn(len(fs))]
@@ -164,6 +166,8 @@ func BenchmarkBigStructParallel(b *testing.B) {
 	}
 	bar := new(sync.WaitGroup)
 	bar.Add(nJob)
+	b.ResetTimer()
+
 	for j := 0; j < nJob; j++ {
 		go func() {
 			defer bar.Done()
