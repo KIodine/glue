@@ -9,6 +9,10 @@ import (
 	"unicode/utf8"
 )
 
+// NOTE: `FieldByName` is slow but cacheable, yet the side effect of using mutex
+// lock to protect the cache cancels out the benefit of caching it.
+// one possible solution is only parallelize the assigning part.
+
 const (
 	/* struct tag */
 	glueTagKey = "glue"
@@ -19,8 +23,6 @@ const (
 var (
 	ErrNotPtrToStruct = errors.New("one of the arguments is not pointer to struct")
 )
-
-// Q: should unexported struct using lowercase name or not?
 
 type (
 	fieldAttr struct {
@@ -66,10 +68,9 @@ func Glue(dst, src interface{}) error {
 		vdst  = reflect.ValueOf(dst)
 		vsrc  = reflect.ValueOf(src)
 		/* reflect stuffs */
-		dstStruct, srcStruct reflect.Value
-		dstType, srcType     reflect.Type
-		srcFieldName         string
-		//dstFieldName string
+		dstStruct, srcStruct       reflect.Value
+		dstType, srcType           reflect.Type
+		srcFieldName               string
 		dstFieldMeta, srcFieldMeta reflect.StructField
 		dstField, srcField         reflect.Value
 		dstAttrs                   *typeAttr
@@ -82,33 +83,15 @@ func Glue(dst, src interface{}) error {
 	dstType = dstStruct.Type()
 	srcType = srcStruct.Type()
 
-	// get filtered(unexported or tagged as ignore) fields.
 	dstAttrs = getTypeAttr(dstType)
-	// X: also cache srcType?
 	dstNumFields := dstAttrs.exportedNum
 
-	// for each field have the same name and same type, copy value.
-	// filtered fields will not present.
 	for i := 0; i < dstNumFields; i++ {
 		dfa := dstAttrs.fieldArr[i]
 		dstFieldMeta = dfa.Field
-		srcFieldName = dfa.PullFrom //dstAttrs.attrMap[dstFieldName].PullFrom
+		srcFieldName = dfa.PullFrom
 
-		// part 1: test if
-		// 1) src field exists
-		// 2) two sides have same type or have registered conversion function.
-
-		// X: costly, but can cache? yes, but aware that this function dives
-		// into embedded members and does scan with breadth-first search.
-		// Cache using {reflect.Type, string} composite key
-
-		// X: This is slow but can be parallelized, yet the side effect of
-		// contention on simple monolithic lock of cache cancels the benefit
-		// obtained from parallelization.
-		// The problem is we don't know it should be build or is cached until we
-		// access the cache and cannot know which type we're going to handle.
 		srcFieldMeta, exist = srcType.FieldByName(srcFieldName)
-		/* no corresponding field on src. */
 		if !exist {
 			continue
 		}
@@ -130,25 +113,12 @@ func Glue(dst, src interface{}) error {
 				continue
 			}
 		}
-		// part 2: test two fields can set and do conversion if required so.
-
-		/*
-			at this point we've guarenteed the field must exist:
-			1) the dst field must exist
-			2) we can get the field on src by the name from dst field
-		*/
-		// `Index` is way faster then access by name.
 		dstField = dstStruct.FieldByIndex(dstFieldMeta.Index)
 		srcField = srcStruct.FieldByIndex(srcFieldMeta.Index)
 
-		/* require both side can set.(probably just need to test one side) */
-		/* Q: `CanSet` means `can mutate`? is there such thing a immutable field
-		in struct? */
 		if !dstField.CanSet() || !srcField.CanSet() {
 			continue
 		}
-		/* does this copy struct field recursivly/deep copy? -> just shallow copy */
-		/* X: maybe a `copyRecursive`? */
 		var v reflect.Value
 		if !doConv {
 			v = reflect.ValueOf(srcField.Interface())
@@ -172,14 +142,14 @@ func isValidPtrToStruct(rv *reflect.Value) bool {
 		return false
 	}
 	ind := rv.Elem()
-	/* don't care it's zero. */
-	//lint:ignore S1008 I know what I'm doing.
+	//lint:ignore S1008 make sure there is one way to be correct.
 	if ind.Kind() != reflect.Struct {
 		return false
 	}
 	return true
 }
 
+// isValidIdentifier checks if a string is a valid golang identifier.
 func isValidIdentifier(s string) bool {
 	var (
 		r  rune
@@ -189,11 +159,7 @@ func isValidIdentifier(s string) bool {
 		return false
 	}
 	r, sz = utf8.DecodeRuneInString(s)
-	/* golang language spec requires the first unicode character must be a
-	"Letter" or '_'. */
 	if r == utf8.RuneError || !unicode.IsLetter(r) || r == rune('_') {
-		/* either the string is empty and encountered an invalid utf8 encode are
-		regarded as error. */
 		return false
 	}
 	s = s[sz:] /* "step" forward. */
@@ -216,8 +182,13 @@ iter_rune:
 	return true
 }
 
-// NOTE: can have struct of types as key.
-// TODO: give it a better name
+// RegConversion creates a conversion mapping from src type to dst type.
+// To create a mapping between two types, user can pass zero value of certain
+// type as hint and a converter function that takes a value of src type and
+// outputs dst type, this function checks the converter function have the
+// correct function signature, if the converter is not a function or does not
+// have the right signature, `RegConversion` returns false, on successful
+// register, this function returns true.
 func RegConversion(tDst, tSrc, converter interface{}) bool {
 	typeDst := reflect.ValueOf(tDst).Type()
 	typeSrc := reflect.ValueOf(tSrc).Type()
@@ -271,7 +242,6 @@ func getTypeAttr(t reflect.Type) *typeAttr {
 
 		/* backport of method `IsExported(1.17-)` */
 		if !(fieldMeta.PkgPath == "") {
-			// no record.
 			continue
 		}
 
@@ -296,7 +266,6 @@ func getTypeAttr(t reflect.Type) *typeAttr {
 		fAttr = &fieldAttr{
 			Field: fieldMeta,
 		}
-		// only record exported/not-ignored struct fields.
 
 		// do parse below this line if allow multiple attributes.
 		// rawAttrs = strings.Split()
