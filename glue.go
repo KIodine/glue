@@ -11,12 +11,11 @@ import (
 
 // NOTE: `FieldByName` is slow but cacheable, yet the side effect of using mutex
 // lock to protect the cache cancels out the benefit of caching it.
-// one possible solution is only parallelize the assigning part.
 
 const (
-	/* struct tag */
+	// struct tag
 	glueTagKey = "glue"
-	/* tag attr */
+	// tag attr
 	attrIgnr = "-"
 )
 
