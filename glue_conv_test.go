@@ -52,18 +52,7 @@ func TestConvBasic(t *testing.T) {
 	assert.Equal(t, float64(0.0), cf.A)
 	assert.Equal(t, float32(0.0), cf.B)
 	assert.Equal(t, uint16(1024), cf.C)
-
-	// reset, randomize.
-	cf.A = rand.Float64()
-	cf.B = rand.Float32()
-	cf.C = uint16(rand.Uint32())
-
 }
-
-/* TODO:
-- test non-function conversion func input.
-- test incompatible conversion function.
-*/
 
 func TestRegNonFunction(t *testing.T) {
 	ok := glue.RegConversion(int(0), int(0), float64(0))
@@ -117,7 +106,7 @@ func BenchmarkConv(b *testing.B) {
 
 	for i := 0; i < b.N; i++ {
 		_ = glue.Glue(cf, cb)
-		// reset, randomize.
+
 		cf.A = rand.Float64()
 		cf.B = rand.Float32()
 		cf.C = uint16(rand.Uint32())
