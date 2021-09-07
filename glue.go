@@ -256,7 +256,7 @@ func getTypeAttr(t reflect.Type) *typeAttr {
 			continue
 		}
 		if rawAttrs == attrIgnr {
-			/* leave pull name blank */
+			/* ignore the field. */
 			continue
 		}
 		if !isValidIdentifier(rawAttrs) {
@@ -269,7 +269,7 @@ func getTypeAttr(t reflect.Type) *typeAttr {
 		// do parse below this line if allow multiple attributes.
 		// rawAttrs = strings.Split()
 		fAttr.PullFrom = rawAttrs
-		// and do anylyze, if required so.
+		// and do analyze, if required so.
 
 		dstAttrs.exportedNum++
 		dstAttrs.fieldArr = append(dstAttrs.fieldArr, fAttr)
