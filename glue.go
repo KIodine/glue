@@ -20,7 +20,9 @@ const (
 )
 
 var (
-	ErrNotPtrToStruct = errors.New("one of the arguments is not pointer to struct")
+	ErrNotPtrToStruct    = errors.New("one of the arguments is not pointer to struct")
+	ErrNotFunction       = errors.New("the `converter` fed in is not a function")
+	ErrIncompatSignature = errors.New("function signature incompatible")
 )
 
 type (
@@ -188,12 +190,12 @@ iter_rune:
 // correct function signature, if the converter is not a function or does not
 // have the right signature, `RegConversion` returns false, on successful
 // register, this function returns true.
-func RegConversion(tDst, tSrc, converter interface{}) bool {
+func RegConversion(tDst, tSrc, converter interface{}) error {
 	typeDst := reflect.ValueOf(tDst).Type()
 	typeSrc := reflect.ValueOf(tSrc).Type()
 	vConvFunc := reflect.ValueOf(converter)
 	if vConvFunc.Kind() != reflect.Func {
-		return false
+		return ErrNotFunction
 	}
 	vfunc := reflect.FuncOf(
 		[]reflect.Type{typeSrc},
@@ -201,7 +203,7 @@ func RegConversion(tDst, tSrc, converter interface{}) bool {
 		false,
 	)
 	if vConvFunc.Type() != vfunc {
-		return false
+		return ErrIncompatSignature
 	}
 
 	convLock.Lock()
@@ -212,7 +214,7 @@ func RegConversion(tDst, tSrc, converter interface{}) bool {
 	}
 	typeMap[mk] = vConvFunc
 
-	return true
+	return nil
 }
 
 // getTypeAttr returns cache of `*typeAttr`, it builds attribute if no cache
