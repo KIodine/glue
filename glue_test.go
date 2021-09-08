@@ -10,10 +10,6 @@ import (
 	"github.com/stretchr/testify/assert"
 )
 
-/* TODO: test failing conditions:
-- [ ] ?Fields cannot set.(How?)
-*/
-
 func TestGlueBasic(t *testing.T) {
 	type xFoo struct {
 		Beta  int
@@ -56,9 +52,6 @@ func TestGlueTagBasic(t *testing.T) {
 
 	assert.Nil(t, err)
 	assert.Equal(t, paz.B, baz.A)
-	if baz.A != paz.B {
-		t.Error("NE!")
-	}
 }
 
 type bFoo struct {
@@ -121,7 +114,6 @@ func TestGlueEmbedded(t *testing.T) {
 	assert.Equal(t, ans_a, eb.EFoo.A)
 }
 
-/* --- benchmarks --- */
 func BenchmarkGlueBasic(b *testing.B) {
 	var ff = new(bFoo)
 	bz := make([]*bBar, 128)
@@ -201,7 +193,6 @@ func TestGlueWithTagRandomParallel(t *testing.T) {
 	}
 	const nJob = 4
 	var bar sync.WaitGroup
-	//var ff *tFoo // = new(tFoo)
 
 	bz := make([]*tBar, 128)
 	for i := 0; i < len(bz); i++ {
@@ -223,12 +214,12 @@ func TestGlueWithTagRandomParallel(t *testing.T) {
 			for i := 0; i < len(bz); i++ {
 				bf := bz[rand.Intn(len(bz))]
 				glue.Glue(ff, bf)
-				/* FIXME: Failing on multi-thread scenario? */
-				assert.Equal(t, bf.M, ff.A) // failing
-				assert.Equal(t, bf.N, ff.B) // failing
-				assert.Equal(t, bf.O, ff.C) // why no failing?
-				assert.Equal(t, bf.P, ff.D) // why no failing?
-				assert.Equal(t, bf.Q, ff.E) // failing
+
+				assert.Equal(t, bf.M, ff.A)
+				assert.Equal(t, bf.N, ff.B)
+				assert.Equal(t, bf.O, ff.C)
+				assert.Equal(t, bf.P, ff.D)
+				assert.Equal(t, bf.Q, ff.E)
 			}
 		}()
 	}
@@ -289,7 +280,6 @@ func BenchmarkGlueWithTagParallel(b *testing.B) {
 	}
 	const nJob = 4
 	var bar sync.WaitGroup
-	//var ff *tFoo // = new(tFoo)
 
 	bz := make([]*tBar, 128)
 	for i := 0; i < len(bz); i++ {
@@ -435,9 +425,9 @@ func TestIgnoreField(t *testing.T) {
 	f := &gFoo{A: -1, B: 0}
 	b := &gBar{A: 1024, B: 512}
 	glue.Glue(f, b)
+
 	assert.Equal(t, -1, f.A)
 	assert.Equal(t, b.B, f.B)
-
 }
 
 // this different since it pulls field A in embedded struct `emb`.

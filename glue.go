@@ -12,6 +12,12 @@ import (
 // NOTE: `FieldByName` is slow but cacheable, yet the side effect of using mutex
 // lock to protect the cache cancels out the benefit of caching it.
 
+// PROPASAL:
+// - [ ] do deepcopy: `glue:"deep"`
+// - [ ] allow get from method? Only methods require no parameter and must have
+//		 matching type.
+// - [ ] allow strict src name: `<struct>.<field>`?
+
 const (
 	// struct tag
 	glueTagKey = "glue"
@@ -34,7 +40,7 @@ type (
 		exportedNum int
 		fieldArr    []*fieldAttr
 	}
-	/* X: better name? */
+
 	typeMapKey struct {
 		dst reflect.Type
 		src reflect.Type
@@ -43,32 +49,23 @@ type (
 
 var (
 	cacheLock sync.Mutex
-	typeCache = make(map[reflect.Type]*typeAttr, 32)
-	// NOTE: if we're making `Glue` as method in the future, this will be a
-	// private attribute.
-	convLock sync.RWMutex
-	typeMap  = make(map[typeMapKey]reflect.Value, 32)
+	attrCache = make(map[reflect.Type]*typeAttr, 32)
+	convLock  sync.RWMutex
+	typeMap   = make(map[typeMapKey]reflect.Value, 32)
 )
 
-/* PROPASAL:
-- [ ] do deepcopy: `glue:"deep"`
-- [ ] allow get from method? Only methods require no parameter and must have
-	matching type.
-- [ ] allow strict src name: `<struct>.<field>`?
-*/
-
-/* Glue copies fields from src to dst that have the same name and the same type.
-The major target of `Glue` is to satisfy the need of dst structure with best
-effort and does not require the two structures being the same "size"(have
-equally numbers of fields).
-`Glue` assumes that dst struct serves as a temporary storage of data and does
-not perform deepcopy on each field that is being copied from. */
+// Glue copies fields from src to dst that have the same name and the same type.
+// The major target of `Glue` is to satisfy the need of dst structure with best
+// effort and does not require the two structures being the same "size"(have
+// equally numbers of fields).
+// `Glue` assumes that dst struct serves as a temporary storage of data and does
+// not perform deepcopy on each field that is being copied from.
 func Glue(dst, src interface{}) error {
 	var (
 		exist bool
 		vdst  = reflect.ValueOf(dst)
 		vsrc  = reflect.ValueOf(src)
-		/* reflect stuffs */
+		// reflect stuffs
 		dstStruct, srcStruct       reflect.Value
 		dstType, srcType           reflect.Type
 		srcFieldName               string
@@ -79,6 +76,7 @@ func Glue(dst, src interface{}) error {
 	if !isValidPtrToStruct(&vdst) || !isValidPtrToStruct(&vsrc) {
 		return ErrNotPtrToStruct
 	}
+
 	dstStruct = vdst.Elem()
 	srcStruct = vsrc.Elem()
 	dstType = dstStruct.Type()
@@ -96,7 +94,7 @@ func Glue(dst, src interface{}) error {
 		if !exist {
 			continue
 		}
-		/* test if types are strictly equal */
+		// test if types are strictly equal.
 		var (
 			fconv  reflect.Value
 			doConv bool
@@ -163,13 +161,13 @@ func isValidIdentifier(s string) bool {
 	if r == utf8.RuneError || !unicode.IsLetter(r) || r == rune('_') {
 		return false
 	}
-	s = s[sz:] /* "step" forward. */
+	s = s[sz:] // "step" forward.
 iter_rune:
 	for {
 		r, sz = utf8.DecodeRuneInString(s)
 		if r == utf8.RuneError {
 			if sz == 0 {
-				/* string is consumed. */
+				// string is consumed.
 				break iter_rune
 			}
 			return false
@@ -188,8 +186,8 @@ iter_rune:
 // type as hint and a converter function that takes a value of src type and
 // outputs dst type, this function checks the converter function have the
 // correct function signature, if the converter is not a function or does not
-// have the right signature, `RegConversion` returns false, on successful
-// register, this function returns true.
+// have the right signature, `RegConversion` returns corresponding error,
+// on successful register, this function returns nil.
 func RegConversion(tDst, tSrc, converter interface{}) error {
 	typeDst := reflect.ValueOf(tDst).Type()
 	typeSrc := reflect.ValueOf(tSrc).Type()
@@ -230,7 +228,7 @@ func getTypeAttr(t reflect.Type) *typeAttr {
 
 	cacheLock.Lock()
 	defer cacheLock.Unlock()
-	dstAttrs, exist = typeCache[t]
+	dstAttrs, exist = attrCache[t]
 	if exist {
 		return dstAttrs
 	}
@@ -241,14 +239,14 @@ func getTypeAttr(t reflect.Type) *typeAttr {
 		// 1) natively exported.
 		// 2) not tagged as ignored.
 
-		/* backport of method `IsExported(1.17-)` */
+		// backport of method `IsExported(1.17-)`
 		if !(fieldMeta.PkgPath == "") {
 			continue
 		}
 
 		rawAttrs, exist = fieldMeta.Tag.Lookup(glueTagKey)
 		if !exist {
-			/* early out, has no glue tag, pullname is field name. */
+			// early out, has no glue tag, pullname is field name.
 			fAttr = &fieldAttr{
 				PullFrom: fieldMeta.Name,
 				Field:    fieldMeta,
@@ -258,7 +256,7 @@ func getTypeAttr(t reflect.Type) *typeAttr {
 			continue
 		}
 		if rawAttrs == attrIgnr {
-			/* ignore the field. */
+			// ignore the field.
 			continue
 		}
 		if !isValidIdentifier(rawAttrs) {
@@ -270,13 +268,13 @@ func getTypeAttr(t reflect.Type) *typeAttr {
 
 		// do parse below this line if allow multiple attributes.
 		// rawAttrs = strings.Split()
-		fAttr.PullFrom = rawAttrs
 		// and do analyze, if required so.
+		fAttr.PullFrom = rawAttrs
 
 		dstAttrs.exportedNum++
 		dstAttrs.fieldArr = append(dstAttrs.fieldArr, fAttr)
 	}
-	typeCache[t] = dstAttrs
+	attrCache[t] = dstAttrs
 
 	return dstAttrs
 }
