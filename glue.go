@@ -181,14 +181,14 @@ iter_rune:
 	return true
 }
 
-// RegConversion creates a conversion mapping from src type to dst type.
+// RegConv creates a conversion mapping from src type to dst type.
 // To create a mapping between two types, user can pass zero value of certain
 // type as hint and a converter function that takes a value of src type and
 // outputs dst type, this function checks the converter function have the
 // correct function signature, if the converter is not a function or does not
-// have the right signature, `RegConversion` returns corresponding error,
+// have the right signature, `RegConv` returns corresponding error,
 // on successful register, this function returns nil.
-func RegConversion(tDst, tSrc, converter interface{}) error {
+func RegConv(tDst, tSrc, converter interface{}) error {
 	typeDst := reflect.ValueOf(tDst).Type()
 	typeSrc := reflect.ValueOf(tSrc).Type()
 	vConvFunc := reflect.ValueOf(converter)
@@ -213,6 +213,16 @@ func RegConversion(tDst, tSrc, converter interface{}) error {
 	typeMap[mk] = vConvFunc
 
 	return nil
+}
+
+// MustRegConv is a shorthand allow user register conversion map on initialize,
+// it panics if parameters does not meet the requirement of `RegConv`.
+func MustRegConv(tDst, tSrc, converter interface{}) bool {
+	err := RegConv(tDst, tSrc, converter)
+	if err != nil {
+		panic(err)
+	}
+	return true
 }
 
 // getTypeAttr returns cache of `*typeAttr`, it builds attribute if no cache

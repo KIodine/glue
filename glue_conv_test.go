@@ -42,11 +42,11 @@ func TestConvBasic(t *testing.T) {
 	}
 	var err error
 
-	err = glue.RegConversion(float64(0), int(0), Int2F64)
+	err = glue.RegConv(float64(0), int(0), Int2F64)
 	assert.NoError(t, err)
-	err = glue.RegConversion(float32(0), int(0), Int2F32)
+	err = glue.RegConv(float32(0), int(0), Int2F32)
 	assert.NoError(t, err)
-	err = glue.RegConversion(uint16(0), int(0), Int2U16)
+	err = glue.RegConv(uint16(0), int(0), Int2U16)
 	assert.NoError(t, err)
 
 	err = glue.Glue(cf, cb)
@@ -58,13 +58,13 @@ func TestConvBasic(t *testing.T) {
 }
 
 func TestRegNonFunction(t *testing.T) {
-	err := glue.RegConversion(int(0), int(0), float64(0))
+	err := glue.RegConv(int(0), int(0), float64(0))
 	assert.ErrorIs(t, err, glue.ErrNotFunction)
 }
 
 func TestRegIncompatSignature(t *testing.T) {
 	Int2F32 := func(n int) float32 { return float32(n) }
-	err := glue.RegConversion(float32(0), int64(0), Int2F32)
+	err := glue.RegConv(float32(0), int64(0), Int2F32)
 	assert.ErrorIs(t, err, glue.ErrIncompatSignature)
 }
 
@@ -100,11 +100,11 @@ func BenchmarkConv(b *testing.B) {
 	}
 	var err error
 
-	err = glue.RegConversion(float64(0), int(0), Int2F64)
+	err = glue.RegConv(float64(0), int(0), Int2F64)
 	assert.NoError(b, err)
-	err = glue.RegConversion(float32(0), int(0), Int2F32)
+	err = glue.RegConv(float32(0), int(0), Int2F32)
 	assert.NoError(b, err)
-	err = glue.RegConversion(uint16(0), int(0), Int2U16)
+	err = glue.RegConv(uint16(0), int(0), Int2U16)
 	assert.NoError(b, err)
 	b.ResetTimer()
 
@@ -145,11 +145,11 @@ func BenchmarkConvParallel(b *testing.B) {
 	}
 	var err error
 
-	err = glue.RegConversion(float64(0), int(0), Int2F64)
+	err = glue.RegConv(float64(0), int(0), Int2F64)
 	assert.NoError(b, err)
-	err = glue.RegConversion(float32(0), int(0), Int2F32)
+	err = glue.RegConv(float32(0), int(0), Int2F32)
 	assert.NoError(b, err)
-	err = glue.RegConversion(uint16(0), int(0), Int2U16)
+	err = glue.RegConv(uint16(0), int(0), Int2U16)
 	assert.NoError(b, err)
 	b.ResetTimer()
 
@@ -175,4 +175,16 @@ func BenchmarkConvParallel(b *testing.B) {
 		}()
 	}
 	wg.Wait()
+}
+
+func TestMustRegConv(t *testing.T) {
+	IntToDouble := func(n int) float64 {
+		return float64(n)
+	}
+	assert.Panics(t, func() {
+		_ = glue.MustRegConv(uint64(0), float64(0), IntToDouble)
+	})
+	assert.NotPanics(t, func() {
+		_ = glue.MustRegConv(float64(0), int(0), IntToDouble)
+	})
 }
