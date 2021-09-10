@@ -12,12 +12,6 @@ import (
 // NOTE: `FieldByName` is slow but cacheable, yet the side effect of using mutex
 // lock to protect the cache cancels out the benefit of caching it.
 
-// PROPASAL:
-// - [ ] do deepcopy: `glue:"deep"`
-// - [ ] allow get from method? Only methods require no parameter and must have
-//		 matching type.
-// - [ ] allow strict src name: `<struct>.<field>`?
-
 const (
 	// struct tag
 	glueTagKey = "glue"
