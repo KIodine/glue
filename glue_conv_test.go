@@ -3,6 +3,8 @@ package glue_test
 import (
 	"glue"
 	"math/rand"
+	"runtime"
+	"sync"
 	"testing"
 
 	"github.com/stretchr/testify/assert"
@@ -38,15 +40,16 @@ func TestConvBasic(t *testing.T) {
 		B: 0,
 		C: 1024,
 	}
-	var ok bool
-	ok = glue.RegConversion(float64(0), int(0), Int2F64)
-	assert.True(t, ok)
-	ok = glue.RegConversion(float32(0), int(0), Int2F32)
-	assert.True(t, ok)
-	ok = glue.RegConversion(uint16(0), int(0), Int2U16)
-	assert.True(t, ok)
+	var err error
 
-	err := glue.Glue(cf, cb)
+	err = glue.RegConv(float64(0), int(0), Int2F64)
+	assert.NoError(t, err)
+	err = glue.RegConv(float32(0), int(0), Int2F32)
+	assert.NoError(t, err)
+	err = glue.RegConv(uint16(0), int(0), Int2U16)
+	assert.NoError(t, err)
+
+	err = glue.Glue(cf, cb)
 
 	assert.NoError(t, err)
 	assert.Equal(t, float64(0.0), cf.A)
@@ -55,14 +58,14 @@ func TestConvBasic(t *testing.T) {
 }
 
 func TestRegNonFunction(t *testing.T) {
-	ok := glue.RegConversion(int(0), int(0), float64(0))
-	assert.False(t, ok)
+	err := glue.RegConv(int(0), int(0), float64(0))
+	assert.ErrorIs(t, err, glue.ErrNotFunction)
 }
 
 func TestRegIncompatSignature(t *testing.T) {
 	Int2F32 := func(n int) float32 { return float32(n) }
-	ok := glue.RegConversion(float32(0), int64(0), Int2F32)
-	assert.False(t, ok)
+	err := glue.RegConv(float32(0), int64(0), Int2F32)
+	assert.ErrorIs(t, err, glue.ErrIncompatSignature)
 }
 
 func BenchmarkConv(b *testing.B) {
@@ -95,13 +98,14 @@ func BenchmarkConv(b *testing.B) {
 		B: 0,
 		C: 1024,
 	}
-	var ok bool
-	ok = glue.RegConversion(float64(0), int(0), Int2F64)
-	assert.True(b, ok)
-	ok = glue.RegConversion(float32(0), int(0), Int2F32)
-	assert.True(b, ok)
-	ok = glue.RegConversion(uint16(0), int(0), Int2U16)
-	assert.True(b, ok)
+	var err error
+
+	err = glue.RegConv(float64(0), int(0), Int2F64)
+	assert.NoError(b, err)
+	err = glue.RegConv(float32(0), int(0), Int2F32)
+	assert.NoError(b, err)
+	err = glue.RegConv(uint16(0), int(0), Int2U16)
+	assert.NoError(b, err)
 	b.ResetTimer()
 
 	for i := 0; i < b.N; i++ {
@@ -111,4 +115,76 @@ func BenchmarkConv(b *testing.B) {
 		cf.B = rand.Float32()
 		cf.C = uint16(rand.Uint32())
 	}
+}
+
+func BenchmarkConvParallel(b *testing.B) {
+	Int2F64 := func(n int) float64 {
+		return float64(n)
+	}
+	Int2F32 := func(n int) float32 {
+		return float32(n)
+	}
+	Int2U16 := func(n int) uint16 {
+		return uint16(n)
+	}
+	type cFoo struct {
+		A float64
+		B float32
+		C uint16
+	}
+	type cBar struct {
+		A int
+		B int
+		C int
+	}
+
+	cb := &cBar{
+		A: 0,
+		B: 0,
+		C: 1024,
+	}
+	var err error
+
+	err = glue.RegConv(float64(0), int(0), Int2F64)
+	assert.NoError(b, err)
+	err = glue.RegConv(float32(0), int(0), Int2F32)
+	assert.NoError(b, err)
+	err = glue.RegConv(uint16(0), int(0), Int2U16)
+	assert.NoError(b, err)
+	b.ResetTimer()
+
+	var nJob = runtime.NumCPU()
+	var wg sync.WaitGroup
+
+	wg.Add(nJob)
+	for j := 0; j < nJob; j++ {
+		go func() {
+			defer wg.Done()
+			cf := &cFoo{
+				A: -1.0,
+				B: -1.0,
+				C: 8192,
+			}
+			for i := 0; i < (b.N / nJob); i++ {
+				_ = glue.Glue(cf, cb)
+
+				cf.A = rand.Float64()
+				cf.B = rand.Float32()
+				cf.C = uint16(rand.Uint32())
+			}
+		}()
+	}
+	wg.Wait()
+}
+
+func TestMustRegConv(t *testing.T) {
+	IntToDouble := func(n int) float64 {
+		return float64(n)
+	}
+	assert.Panics(t, func() {
+		_ = glue.MustRegConv(uint64(0), float64(0), IntToDouble)
+	})
+	assert.NotPanics(t, func() {
+		_ = glue.MustRegConv(float64(0), int(0), IntToDouble)
+	})
 }
