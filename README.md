@@ -5,15 +5,49 @@
 - Both fields have the same name or source have the field with name tagged on dst field.
 - Both fields have (strictly) same type or registered conversion function.
 
+One thing to be noted that `Glue` can pull fields from embedded struct, you may think `Glue` worked like this:
+```go
+type Emb struct {
+    E int
+}
+type Foo struct {
+    A int
+    E int
+}
+type Bar struct {
+    A int
+    Emb
+}
+
+f := &Foo{}
+b := &Bar{
+    Emb: Emb{E: 1024},
+    A:   4096,
+}
+
+err := glue.Glue(f, b)
+// glue does something like this for you:
+// f.A = b.A
+// f.E = b.E (or f.E = b.Emb.E)
+```
+
+You may consider using `Glue` or other similar solution (like jinzhu/copier) when you have two near-identical struct that you cannot/have hard time change/changing the definition (legacy library or auto generated, ex: Protobuf), `Glue` can handle the filling process programmatically.
+
+Or you can just hard-code the filling process ;), but if this kind of code happens all the time across the project, `Glue` and similar solutions are always an option.
+
 `Glue` only accepts pointer to struct as parameter, if not it returns an `ErrNotPtrToStruct` error.
 
-A field can be tagged with a valid identifier to specify the name of field to pull from source struct or tagged as ignore using "-", in that way the field will not be filled.
+A field can be tagged with a valid identifier to specify the name of field to pull from source struct or tagged as ignore using `-`, in that way the field will not be filled.
+Unexported fields are always ignored even with tags, they cannot be set using reflect library by the way.
+
 Currently `Glue` only accept one tag attribute, also the tag takes no effect when a field is in the source struct.
+
+`Glue` panics if tag attribute is not `-`(ignore) or a valid golang identifier.
 
 You can register a global conversion function using `RegConv`, the function must have signature that takes type of source field and outputs a value that have the same type as the destination field.
 `RegConv` fails if the `converter` passed in is not a function or a function having incompatible signature.
 
-`Glue` is thread-safe though internal uses some globally available cache.
+`Glue` is thread-safe though it uses some globally available cache internally.
 
 ## Examples
 The most basic usage:
