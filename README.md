@@ -170,7 +170,7 @@ var _ = glue.MustRegConv(float64(0), int(0), f64toInt) // fail on startup
 ```
 
 ## Performance
-Reflection stuffs are usually not quiet fast, especially involving embedded/anonymous fields, especially searching fields in embedded structure, it slows down the process significantly.
+Reflection stuffs are usually not quite fast, especially involving embedded/anonymous fields, especially searching fields in embedded structure, it slows down the process significantly.
 Searching fields inside embedded structure is about 4 time slower on my computer compare to accessing plain and expored fields, and cost almost 16 times more memory then the plain version during benchmarking.
 
 Althought it is a slow process, it can be benefit from parallelized processing.
