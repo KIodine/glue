@@ -114,27 +114,6 @@ func TestGlueEmbedded(t *testing.T) {
 	assert.Equal(t, ans_a, eb.EFoo.A)
 }
 
-func BenchmarkGlueBasic(b *testing.B) {
-	var ff = new(bFoo)
-	bz := make([]*bBar, 128)
-	for i := 0; i < len(bz); i++ {
-		bz[i] = &bBar{
-			A: rand.Int63(),
-			B: "bBarstring" + strconv.QuoteRune('A'+rand.Int31n(26)),
-			C: []byte{'a', 'b', 'c', 'd'},
-			D: make(map[string]bool),
-			E: make(chan int, 24),
-			F: rand.Uint32(),
-		}
-	}
-	b.ResetTimer()
-
-	for i := 0; i < b.N; i++ {
-		bf := bz[rand.Intn(len(bz))]
-		glue.Glue(ff, bf)
-	}
-}
-
 func TestGlueWithTagRandom(t *testing.T) {
 	type tFoo struct {
 		A int64           `glue:"M"`
@@ -220,88 +199,6 @@ func TestGlueWithTagRandomParallel(t *testing.T) {
 				assert.Equal(t, bf.O, ff.C)
 				assert.Equal(t, bf.P, ff.D)
 				assert.Equal(t, bf.Q, ff.E)
-			}
-		}()
-	}
-	bar.Wait()
-}
-
-func BenchmarkGlueWithTag(b *testing.B) {
-	type tFoo struct {
-		A int64           `glue:"M"`
-		B string          `glue:"N"`
-		C []byte          `glue:"O"`
-		D map[string]bool `glue:"P"`
-		E chan int        `glue:"Q"`
-	}
-	type tBar struct {
-		M int64
-		N string
-		O []byte
-		P map[string]bool
-		Q chan int
-		r uint32
-	}
-	var ff = new(tFoo)
-	bz := make([]*tBar, 128)
-	for i := 0; i < len(bz); i++ {
-		bz[i] = &tBar{
-			M: rand.Int63(),
-			N: "bBarstring" + strconv.QuoteRune('A'+rand.Int31n(26)),
-			O: []byte{'a', 'b', 'c', 'd'},
-			P: make(map[string]bool),
-			Q: make(chan int, 24),
-			r: rand.Uint32(),
-		}
-	}
-	b.ResetTimer()
-
-	for i := 0; i < b.N; i++ {
-		bf := bz[rand.Intn(len(bz))]
-		glue.Glue(ff, bf)
-	}
-}
-
-func BenchmarkGlueWithTagParallel(b *testing.B) {
-	type tFoo struct {
-		A int64           `glue:"M"`
-		B string          `glue:"N"`
-		C []byte          `glue:"O"`
-		D map[string]bool `glue:"P"`
-		E chan int        `glue:"Q"`
-	}
-	type tBar struct {
-		M int64
-		N string
-		O []byte
-		P map[string]bool
-		Q chan int
-		r uint32
-	}
-	const nJob = 4
-	var bar sync.WaitGroup
-
-	bz := make([]*tBar, 128)
-	for i := 0; i < len(bz); i++ {
-		bz[i] = &tBar{
-			M: rand.Int63(),
-			N: "bBarstring" + strconv.QuoteRune('A'+rand.Int31n(26)),
-			O: []byte{'a', 'b', 'c', 'd'},
-			P: make(map[string]bool),
-			Q: make(chan int, 24),
-			r: rand.Uint32(),
-		}
-	}
-	b.ResetTimer()
-
-	bar.Add(nJob)
-	for j := 0; j < nJob; j++ {
-		go func() {
-			defer bar.Done()
-			ff := new(tFoo)
-			for i := 0; i < (b.N / nJob); i++ {
-				bf := bz[rand.Intn(len(bz))]
-				glue.Glue(ff, bf)
 			}
 		}()
 	}
@@ -433,22 +330,22 @@ func TestIgnoreField(t *testing.T) {
 // this different since it pulls field A in embedded struct `emb`.
 func TestPullEmbedded(t *testing.T) {
 	type (
-		emb struct {
+		Emb struct {
 			A int
 		}
 		Foo struct {
 			A int
 		}
 		Bar struct {
-			emb
+			Emb
 			B int
 		}
 	)
 	f := &Foo{A: -1}
-	b := &Bar{emb: emb{A: 1023}, B: 99}
+	b := &Bar{Emb: Emb{A: 1023}, B: 99}
 
 	err := glue.Glue(f, b)
 
 	assert.NoError(t, err)
-	assert.Equal(t, b.emb.A, f.A)
+	assert.Equal(t, b.Emb.A, f.A)
 }

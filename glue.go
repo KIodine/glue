@@ -20,26 +20,27 @@ const (
 )
 
 var (
-	ErrNotPtrToStruct    = errors.New("one of the arguments is not pointer to struct")
-	ErrNotFunction       = errors.New("the `converter` fed in is not a function")
-	ErrIncompatSignature = errors.New("function signature incompatible")
+	ErrGlue              = errors.New("GlueError") // the base error of package `glue`.
+	ErrNotPtrToStruct    = fmt.Errorf("%w: one of the arguments is not pointer to struct", ErrGlue)
+	ErrNotFunction       = fmt.Errorf("%w: the `converter` fed in is not a function", ErrGlue)
+	ErrIncompatSignature = fmt.Errorf("%w: function signature incompatible", ErrGlue)
+	ErrUnsatisfiedField  = fmt.Errorf("%w: unsatisfied field", ErrGlue)
 )
 
-type (
-	fieldAttr struct {
-		PullFrom string
-		Field    reflect.StructField
-	}
-	typeAttr struct {
-		exportedNum int
-		fieldArr    []*fieldAttr
-	}
+type fieldAttr struct {
+	Alias     string // The name a field used to pull/push from/to another struct.
+	FieldMeta reflect.StructField
+}
+type typeAttr struct {
+	ExportedNum int // the number of available/settable fields.
+	FieldAttrs  []*fieldAttr
+}
 
-	typeMapKey struct {
-		dst reflect.Type
-		src reflect.Type
-	}
-)
+// The key of map of conversion functions.
+type typeMapKey struct {
+	Dst reflect.Type
+	Src reflect.Type
+}
 
 var (
 	cacheLock sync.Mutex
@@ -54,21 +55,26 @@ var (
 // equally numbers of fields).
 // `Glue` assumes that dst struct serves as a temporary storage of data and does
 // not perform deepcopy on each field that is being copied from.
-func Glue(dst, src interface{}) error {
+func Glue(dst, src interface{}, opts ...GlueOption) error {
 	var (
-		exist bool
-		vdst  = reflect.ValueOf(dst)
-		vsrc  = reflect.ValueOf(src)
+		options glueOptions
+		exist   bool
+		vdst    = reflect.ValueOf(dst)
+		vsrc    = reflect.ValueOf(src)
 		// reflect stuffs
 		dstStruct, srcStruct       reflect.Value
 		dstType, srcType           reflect.Type
-		srcFieldName               string
+		alias                      string
 		dstFieldMeta, srcFieldMeta reflect.StructField
 		dstField, srcField         reflect.Value
-		dstAttrs                   *typeAttr
+		fAttrs                     *typeAttr
 	)
 	if !isValidPtrToStruct(&vdst) || !isValidPtrToStruct(&vsrc) {
 		return ErrNotPtrToStruct
+	}
+
+	for _, opt := range opts {
+		opt.apply(&options)
 	}
 
 	dstStruct = vdst.Elem()
@@ -76,18 +82,33 @@ func Glue(dst, src interface{}) error {
 	dstType = dstStruct.Type()
 	srcType = srcStruct.Type()
 
-	dstAttrs = getTypeAttr(dstType)
-	dstNumFields := dstAttrs.exportedNum
+	if options.FavorSource {
+		fAttrs = getTypeAttr(srcType)
+	} else {
+		fAttrs = getTypeAttr(dstType)
+	}
 
-	for i := 0; i < dstNumFields; i++ {
-		dfa := dstAttrs.fieldArr[i]
-		dstFieldMeta = dfa.Field
-		srcFieldName = dfa.PullFrom
+	nFields := fAttrs.ExportedNum
 
-		srcFieldMeta, exist = srcType.FieldByName(srcFieldName)
+	for i := 0; i < nFields; i++ {
+		fa := fAttrs.FieldAttrs[i]
+		alias = fa.Alias
+
+		if options.FavorSource {
+			srcFieldMeta = fa.FieldMeta
+			dstFieldMeta, exist = dstType.FieldByName(alias)
+		} else {
+			dstFieldMeta = fa.FieldMeta
+			srcFieldMeta, exist = srcType.FieldByName(alias)
+		}
+
 		if !exist {
+			if options.Strict {
+				return fmt.Errorf("%w: %#v", ErrUnsatisfiedField, alias)
+			}
 			continue
 		}
+
 		// test if types are strictly equal.
 		var (
 			fconv  reflect.Value
@@ -95,8 +116,8 @@ func Glue(dst, src interface{}) error {
 		)
 		if dstFieldMeta.Type != srcFieldMeta.Type {
 			mk := typeMapKey{
-				dst: dstFieldMeta.Type,
-				src: srcFieldMeta.Type,
+				Dst: dstFieldMeta.Type,
+				Src: srcFieldMeta.Type,
 			}
 			convLock.RLock()
 			fconv, exist = typeMap[mk]
@@ -201,12 +222,25 @@ func RegConv(tDst, tSrc, converter interface{}) error {
 	convLock.Lock()
 	defer convLock.Unlock()
 	mk := typeMapKey{
-		dst: typeDst,
-		src: typeSrc,
+		Dst: typeDst,
+		Src: typeSrc,
 	}
 	typeMap[mk] = vConvFunc
 
 	return nil
+}
+
+// DeregConv deregisters the conversion mapping between two types.
+func DeregConv(tDst, tSrc interface{}) {
+	typeDst := reflect.ValueOf(tDst).Type()
+	typeSrc := reflect.ValueOf(tSrc).Type()
+	convLock.Lock()
+	defer convLock.Unlock()
+	mk := typeMapKey{
+		Dst: typeDst,
+		Src: typeSrc,
+	}
+	delete(typeMap, mk)
 }
 
 // MustRegConv is a shorthand allow user register conversion map on initialize,
@@ -252,11 +286,11 @@ func getTypeAttr(t reflect.Type) *typeAttr {
 		if !exist {
 			// early out, has no glue tag, pullname is field name.
 			fAttr = &fieldAttr{
-				PullFrom: fieldMeta.Name,
-				Field:    fieldMeta,
+				Alias:     fieldMeta.Name,
+				FieldMeta: fieldMeta,
 			}
-			dstAttrs.exportedNum++
-			dstAttrs.fieldArr = append(dstAttrs.fieldArr, fAttr)
+			dstAttrs.ExportedNum++
+			dstAttrs.FieldAttrs = append(dstAttrs.FieldAttrs, fAttr)
 			continue
 		}
 		if rawAttrs == attrIgnr {
@@ -267,16 +301,16 @@ func getTypeAttr(t reflect.Type) *typeAttr {
 			panic(fmt.Errorf("%q is not a valid identifier", rawAttrs))
 		}
 		fAttr = &fieldAttr{
-			Field: fieldMeta,
+			FieldMeta: fieldMeta,
 		}
 
 		// do parse below this line if allow multiple attributes.
 		// rawAttrs = strings.Split()
 		// and do analyze, if required so.
-		fAttr.PullFrom = rawAttrs
+		fAttr.Alias = rawAttrs
 
-		dstAttrs.exportedNum++
-		dstAttrs.fieldArr = append(dstAttrs.fieldArr, fAttr)
+		dstAttrs.ExportedNum++
+		dstAttrs.FieldAttrs = append(dstAttrs.FieldAttrs, fAttr)
 	}
 	attrCache[t] = dstAttrs
 
