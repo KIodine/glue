@@ -88,10 +88,7 @@ func Glue(dst, src interface{}, opts ...GlueOption) error {
 		fAttrs = getTypeAttr(dstType)
 	}
 
-	nFields := fAttrs.ExportedNum
-
-	for i := 0; i < nFields; i++ {
-		fa := fAttrs.FieldAttrs[i]
+	for _, fa := range fAttrs.FieldAttrs {
 		alias = fa.Alias
 
 		if options.FavorSource {
@@ -124,6 +121,9 @@ func Glue(dst, src interface{}, opts ...GlueOption) error {
 			convLock.RUnlock()
 			doConv = exist
 			if !exist {
+				if options.Strict {
+					return fmt.Errorf("%w: %#v", ErrUnsatisfiedField, alias)
+				}
 				continue
 			}
 		}
