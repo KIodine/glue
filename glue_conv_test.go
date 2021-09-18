@@ -4,6 +4,7 @@ import (
 	"glue"
 	"math/rand"
 	"runtime"
+	"strconv"
 	"sync"
 	"testing"
 
@@ -187,4 +188,38 @@ func TestMustRegConv(t *testing.T) {
 	assert.NotPanics(t, func() {
 		_ = glue.MustRegConv(float64(0), int(0), IntToDouble)
 	})
+}
+
+func TestDeregConv(t *testing.T) {
+	type Foo struct {
+		A int
+	}
+	type Bar struct {
+		A string
+	}
+	strToInt := func(s string) int {
+		n, _ := strconv.Atoi(s)
+		return n
+	}
+	err := glue.RegConv(int(0), "", strToInt)
+	assert.NoError(t, err)
+
+	opts := []glue.GlueOption{
+		glue.DoStrict(),
+	}
+
+	a := &Foo{A: -1}
+	b := &Bar{A: "1023"}
+
+	err = glue.Glue(a, b, opts...)
+	assert.NoError(t, err)
+	assert.Equal(t, 1023, a.A)
+
+	glue.DeregConv(int(0), "")
+	a.A = -1
+
+	err = glue.Glue(a, b, opts...)
+	assert.ErrorIs(t, err, glue.ErrUnsatisfiedField)
+	assert.Equal(t, -1, a.A)
+
 }
